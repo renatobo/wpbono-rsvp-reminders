@@ -5,3 +5,4 @@ dist/
 *.log
 phpstan.neon
 LOCAL-DEV.md
+wpbono-rsvp-reminders-v*.zip

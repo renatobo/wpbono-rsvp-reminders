@@ -11,6 +11,9 @@
  * Text Domain: wpbono-rsvp-reminders
  * Requires at least: 7.0
  * Requires PHP: 8.2
+ * GitHub Plugin URI: https://github.com/renatobo/wpbono-rsvp-reminders
+ * Primary Branch:    main
+ * Release Asset:     true
  *
  * The directory name wpbono-rsvp-reminders is the upgrade key WordPress uses to
  * recognise an installed copy. Never rename it: a rename installs a second
