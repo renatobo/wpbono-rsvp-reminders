@@ -132,6 +132,35 @@ stores, rather than the timezone-adjusted `get_repeats_adjusted()` variants.
   **revises** the attendee's calendar entry rather than duplicating it. This is
   what corrects their calendar when an event moves.
 
+### The invitation builder lives in the theme, and is shared
+
+`wpbono_fse_theme_event_ics($event, $rsvp, $organizer)` is defined in the
+**WPBono FSE theme's `functions.php`**, not here. Three emails call it:
+
+| sender | owner |
+| --- | --- |
+| RSVP confirmation | theme, via `wpbono_fse_theme_attach_rsvp_ics` |
+| RSVP update notice | theme, same filter |
+| Scheduled reminder | this plugin, `includes/mailer.php`, behind `function_exists` |
+
+This plugin only sends reminders, but it does **not** build its own invite, and
+should not start. All three deliberately emit the same
+`UID:evo-rsvp-<rsvpID>@host` and share the `SEQUENCE` counter in
+`_wpbono_ics_sequence` on the RSVP post. That is precisely what makes a reminder
+*revise* the attendee's existing calendar entry rather than adding a duplicate,
+and what corrects their calendar when an event moves. Forking the builder here
+would drift: a different UID puts a second event on someone's calendar, a stale
+SEQUENCE makes the revision silently ignored.
+
+The consequence runs the other way too: **a change to that theme function
+changes the email this plugin sends**, with nothing here to flag it. If the
+theme is swapped or deactivated, reminders still go out, just with no invite
+attached, and the settings screen says as much.
+
+If the coupling ever needs breaking, moving the builder into this plugin only
+inverts the problem (confirmations would then depend on a reminders plugin being
+active). A third shared plugin is the clean answer; duplication is not.
+
 ## Known trade, already accepted
 
 Gmail shows Yes/Maybe/No on `METHOD:REQUEST` invitations despite
