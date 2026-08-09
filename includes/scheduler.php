@@ -8,6 +8,8 @@ if (!defined('ABSPATH')) {
 }
 
 const WPBONO_RSVP_REMINDERS_META_SENT = '_wpbono_reminder_sent';
+const WPBONO_RSVP_REMINDERS_META_SIG = '_wpbono_reminder_last_start';
+const WPBONO_RSVP_REMINDERS_LOCK = 'wpbono_rsvp_reminders_running';
 
 /**
  * One tick.
@@ -20,6 +22,12 @@ const WPBONO_RSVP_REMINDERS_META_SENT = '_wpbono_reminder_sent';
  * The sent marker is written before the send is attempted for a given lead, so
  * a mailer failure costs one reminder rather than looping the same person on
  * every tick for days.
+ *
+ * A *sequentially* late or repeated tick is harmless for those reasons. Two
+ * ticks running at once are not: both would read the same empty marker and both
+ * would send. WP-Cron spawns on traffic and does overlap, so the sweep takes a
+ * lock. The lock expires on its own, so a fatal mid-sweep costs one hour rather
+ * than wedging reminders permanently.
  */
 function wpbono_rsvp_reminders_run() {
     if (!wpbono_rsvp_reminders_has_eventon()) {
@@ -28,33 +36,67 @@ function wpbono_rsvp_reminders_run() {
     if (wpbono_rsvp_reminders_setting('enabled') !== 'yes') {
         return;
     }
+    if (get_transient(WPBONO_RSVP_REMINDERS_LOCK)) {
+        return;
+    }
+    set_transient(WPBONO_RSVP_REMINDERS_LOCK, time(), 15 * MINUTE_IN_SECONDS);
 
-    $now = time();
-    $leads = wpbono_rsvp_reminders_lead_set();
-    $lookahead = $now + (max($leads) * DAY_IN_SECONDS);
+    try {
+        $now = time();
+        $leads = wpbono_rsvp_reminders_lead_set();
+        $lookahead = $now + (max($leads) * DAY_IN_SECONDS);
 
-    // Only events that start between now and the furthest lead time can have
-    // anything due, which keeps this to a handful of posts on any real site.
-    $events = get_posts(array(
-        'post_type'      => 'ajde_events',
-        'post_status'    => 'publish',
-        'posts_per_page' => 100,
-        'fields'         => 'ids',
-        'meta_query'     => array(
-            array(
-                'key'     => 'evcal_srow',
-                'value'   => array($now, $lookahead),
-                'compare' => 'BETWEEN',
-                'type'    => 'NUMERIC',
-            ),
-        ),
-    ));
-
-    foreach ($events as $event_id) {
-        wpbono_rsvp_reminders_process_event($event_id, $now);
+        foreach (wpbono_rsvp_reminders_candidate_events($now, $lookahead) as $event_id) {
+            wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead);
+        }
+    } finally {
+        delete_transient(WPBONO_RSVP_REMINDERS_LOCK);
     }
 }
 add_action(WPBONO_RSVP_REMINDERS_CRON, 'wpbono_rsvp_reminders_run');
+
+/**
+ * Events that could have something due between now and the furthest lead time.
+ *
+ * A one-off event qualifies when its own start falls in the window. A repeating
+ * one cannot be filtered that way: evcal_srow holds only the *first*
+ * occurrence, so a weekly ride that began last year would never be selected
+ * again even though occurrence 40 is next Saturday. Those are pulled in on the
+ * repeat flag instead and narrowed down per occurrence in PHP.
+ */
+function wpbono_rsvp_reminders_candidate_events($now, $lookahead) {
+    return get_posts(array(
+        'post_type'              => 'ajde_events',
+        'post_status'            => 'publish',
+        'posts_per_page'         => 200,
+        'fields'                 => 'ids',
+        'no_found_rows'          => true,
+        'update_post_meta_cache' => false,
+        'update_post_term_cache' => false,
+        'meta_query'             => array(
+            'relation' => 'AND',
+            array(
+                'key'     => 'evcal_srow',
+                'value'   => $lookahead,
+                'compare' => '<=',
+                'type'    => 'NUMERIC',
+            ),
+            array(
+                'relation' => 'OR',
+                array(
+                    'key'     => 'evcal_srow',
+                    'value'   => $now,
+                    'compare' => '>=',
+                    'type'    => 'NUMERIC',
+                ),
+                array(
+                    'key'   => 'evcal_repeat',
+                    'value' => 'yes',
+                ),
+            ),
+        ),
+    ));
+}
 
 /**
  * The lead times in play site-wide, longest first.
@@ -75,15 +117,53 @@ function wpbono_rsvp_reminders_lead_set() {
     return $leads;
 }
 
-function wpbono_rsvp_reminders_process_event($event_id, $now) {
+/**
+ * The occurrences of one event that start inside the window, as ri => start.
+ *
+ * A one-off event is occurrence 0 at evcal_srow. A repeating one is described
+ * by repeat_intervals, a map of repeat index to array(start, end). Raw unix
+ * values are used throughout, matching evcal_srow and what EventON stores,
+ * rather than the timezone-adjusted variants.
+ */
+function wpbono_rsvp_reminders_occurrences($event_id, $now, $lookahead) {
+    $occurrences = array();
+
+    if (wpbono_rsvp_reminders_is_repeating($event_id)) {
+        $repeats = maybe_unserialize(get_post_meta($event_id, 'repeat_intervals', true));
+        foreach ((array) $repeats as $ri => $pair) {
+            $start = is_array($pair) && isset($pair[0]) ? (int) $pair[0] : 0;
+            if ($start > $now && $start <= $lookahead) {
+                $occurrences[(int) $ri] = $start;
+            }
+        }
+        return $occurrences;
+    }
+
+    $start = (int) get_post_meta($event_id, 'evcal_srow', true);
+    if ($start > $now && $start <= $lookahead) {
+        $occurrences[0] = $start;
+    }
+    return $occurrences;
+}
+
+/**
+ * Mirrors EVO_Event::is_repeating_event(): the flag alone is not enough, a
+ * single-entry interval map is a one-off event that once had repeats.
+ */
+function wpbono_rsvp_reminders_is_repeating($event_id) {
+    if (get_post_meta($event_id, 'evcal_repeat', true) !== 'yes') {
+        return false;
+    }
+    $repeats = maybe_unserialize(get_post_meta($event_id, 'repeat_intervals', true));
+    return is_array($repeats) && count($repeats) > 1;
+}
+
+function wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead) {
     if (wpbono_rsvp_reminders_event_disabled($event_id)) {
         return;
     }
 
-    $start = (int) get_post_meta($event_id, 'evcal_srow', true);
-    if ($start <= $now) {
-        return;
-    }
+    $repeating = wpbono_rsvp_reminders_is_repeating($event_id);
 
     // Which lead times apply to this event: its own (or the site default),
     // plus the site-wide second reminder when one is configured.
@@ -93,56 +173,94 @@ function wpbono_rsvp_reminders_process_event($event_id, $now) {
         $leads[] = $second;
     }
 
-    $due = array();
-    foreach ($leads as $lead) {
-        if ($now >= ($start - ($lead * DAY_IN_SECONDS))) {
-            $due[] = $lead;
+    foreach (wpbono_rsvp_reminders_occurrences($event_id, $now, $lookahead) as $ri => $start) {
+        $due = array();
+        foreach ($leads as $lead) {
+            if ($now >= ($start - ($lead * DAY_IN_SECONDS))) {
+                $due[] = $lead;
+            }
+        }
+        if (empty($due)) {
+            continue;
+        }
+
+        // Longest lead first, so an attendee who has already had the short
+        // reminder is never sent the long one afterwards.
+        rsort($due);
+
+        foreach (wpbono_rsvp_reminders_eligible_rsvps($event_id, $repeating ? $ri : null) as $rsvp_id) {
+            $sent = wpbono_rsvp_reminders_sent_leads($rsvp_id, $ri);
+
+            // Nothing has gone yet and several leads are already past: this is
+            // a first run close to the event. Only the most recent lead still
+            // means anything, and sending the rest would fire the whole ladder
+            // an hour apart.
+            $candidates = empty($sent) ? array(min($due)) : $due;
+
+            foreach ($candidates as $lead) {
+                if (in_array($lead, $sent, true)) {
+                    continue;
+                }
+
+                // If they already had a reminder at a shorter lead, an older one
+                // is moot: nobody wants "in 7 days" after "tomorrow".
+                if (!empty($sent) && min($sent) <= $lead) {
+                    continue;
+                }
+
+                $sent[] = $lead;
+                wpbono_rsvp_reminders_mark_sent($rsvp_id, $ri, $sent);
+
+                wpbono_rsvp_reminders_send($rsvp_id, $event_id, $lead);
+                break; // one email per attendee per occurrence per tick
+            }
         }
     }
-    if (empty($due)) {
-        return;
-    }
-
-    // Longest lead first, so a first-time run close to an event sends the
-    // earlier reminder rather than skipping straight to the last-minute one.
-    rsort($due);
-
-    foreach (wpbono_rsvp_reminders_eligible_rsvps($event_id) as $rsvp_id) {
-        $sent = wpbono_rsvp_reminders_sent_leads($rsvp_id);
-
-        foreach ($due as $lead) {
-            if (in_array($lead, $sent, true)) {
-                continue;
-            }
-
-            // If they already had a reminder at a shorter lead, an older one is
-            // moot: nobody wants "in 7 days" after "tomorrow".
-            if (!empty($sent) && min($sent) <= $lead) {
-                continue;
-            }
-
-            $sent[] = $lead;
-            update_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT, $sent);
-
-            wpbono_rsvp_reminders_send($rsvp_id, $event_id, $lead);
-            break; // one email per attendee per tick
-        }
-    }
-}
-
-function wpbono_rsvp_reminders_sent_leads($rsvp_id) {
-    $sent = get_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT, true);
-    return is_array($sent) ? array_map('intval', $sent) : array();
 }
 
 /**
- * Attendees eligible for a reminder on this event.
+ * Lead times already sent to one attendee for one occurrence.
+ *
+ * The marker is array( repeat index => array( lead days ) ). Before occurrence
+ * support it was a flat array of lead days, which is read here as occurrence 0
+ * so an upgrade does not re-send to everyone already reminded.
+ */
+function wpbono_rsvp_reminders_sent_leads($rsvp_id, $ri = 0) {
+    $sent = wpbono_rsvp_reminders_sent_map($rsvp_id);
+    return isset($sent[(int) $ri]) ? array_map('intval', $sent[(int) $ri]) : array();
+}
+
+function wpbono_rsvp_reminders_sent_map($rsvp_id) {
+    $sent = get_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT, true);
+    if (!is_array($sent) || empty($sent)) {
+        return array();
+    }
+    // Pre-occurrence format: a flat list of lead times.
+    if (!is_array(reset($sent))) {
+        return array(0 => array_map('intval', $sent));
+    }
+    return $sent;
+}
+
+function wpbono_rsvp_reminders_mark_sent($rsvp_id, $ri, $leads) {
+    $sent = wpbono_rsvp_reminders_sent_map($rsvp_id);
+    $sent[(int) $ri] = array_values(array_unique(array_map('intval', $leads)));
+    update_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT, $sent);
+}
+
+/**
+ * Attendees eligible for a reminder on this event, optionally for one
+ * occurrence of it.
  *
  * Always limited to a Yes RSVP. The "Receive updates about event" opt-in is an
  * additional filter, on by default, because that is the consent the attendee
  * actually gave for mail beyond their confirmation.
+ *
+ * $ri null means "every RSVP on this event regardless of occurrence", which is
+ * what a one-off event wants: filtering those by repeat_interval would drop an
+ * RSVP carrying a stray value.
  */
-function wpbono_rsvp_reminders_eligible_rsvps($event_id) {
+function wpbono_rsvp_reminders_eligible_rsvps($event_id, $ri = null) {
     $meta_query = array(
         'relation' => 'AND',
         array('key' => 'e_id', 'value' => $event_id),
@@ -153,36 +271,81 @@ function wpbono_rsvp_reminders_eligible_rsvps($event_id) {
         $meta_query[] = array('key' => 'updates', 'value' => 'yes');
     }
 
+    if ($ri !== null) {
+        $meta_query[] = wpbono_rsvp_reminders_ri_clause($ri);
+    }
+
+    return wpbono_rsvp_reminders_rsvp_ids($meta_query);
+}
+
+/**
+ * Occurrence 0 covers RSVPs saved before the event repeated, which have no
+ * repeat_interval meta at all. EventON matches the same three ways.
+ */
+function wpbono_rsvp_reminders_ri_clause($ri) {
+    if ((int) $ri !== 0) {
+        return array('key' => 'repeat_interval', 'value' => (int) $ri);
+    }
+    return array(
+        'relation' => 'OR',
+        array('key' => 'repeat_interval', 'value' => '0'),
+        array('key' => 'repeat_interval', 'value' => ''),
+        array('key' => 'repeat_interval', 'compare' => 'NOT EXISTS'),
+    );
+}
+
+function wpbono_rsvp_reminders_rsvp_ids($meta_query) {
     return get_posts(array(
-        'post_type'      => 'evo-rsvp',
-        'post_status'    => 'any',
-        'posts_per_page' => -1,
-        'fields'         => 'ids',
-        'meta_query'     => $meta_query,
+        'post_type'              => 'evo-rsvp',
+        'post_status'            => 'any',
+        'posts_per_page'         => 500,
+        'fields'                 => 'ids',
+        'no_found_rows'          => true,
+        'update_post_meta_cache' => false,
+        'update_post_term_cache' => false,
+        'meta_query'             => $meta_query,
     ));
 }
 
 /**
- * Clear the sent markers for an event when its start time moves.
+ * Clear the sent markers for an event when its schedule moves.
  *
  * A rescheduled event is a different proposition, and people who were told
- * "Saturday" need telling again. Only forward moves matter; an event pulled
- * earlier than the lead window simply never re-sends.
+ * "Saturday" need telling again. Both the one-off start and the repeat interval
+ * map count: editing a repeating event's series moves every occupied occurrence
+ * at once.
+ *
+ * Markers are cleared for every RSVP on the event rather than only the eligible
+ * ones, so somebody who has since changed their answer or their opt-in does not
+ * keep a stale marker that would suppress a later reminder if they change back.
  */
 function wpbono_rsvp_reminders_reset_on_reschedule($meta_id, $post_id, $meta_key, $meta_value) {
-    if ($meta_key !== 'evcal_srow' || get_post_type($post_id) !== 'ajde_events') {
+    if (!in_array($meta_key, array('evcal_srow', 'repeat_intervals'), true)) {
+        return;
+    }
+    if (get_post_type($post_id) !== 'ajde_events') {
         return;
     }
 
-    $previous = (int) get_post_meta($post_id, '_wpbono_reminder_last_start', true);
-    $new = (int) $meta_value;
+    $signature = wpbono_rsvp_reminders_schedule_signature($post_id);
+    $previous = (string) get_post_meta($post_id, WPBONO_RSVP_REMINDERS_META_SIG, true);
 
-    if ($previous && $previous !== $new) {
-        foreach (wpbono_rsvp_reminders_eligible_rsvps($post_id) as $rsvp_id) {
+    if ($previous !== '' && $previous !== $signature) {
+        foreach (wpbono_rsvp_reminders_rsvp_ids(array(array('key' => 'e_id', 'value' => $post_id))) as $rsvp_id) {
             delete_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT);
         }
     }
-    update_post_meta($post_id, '_wpbono_reminder_last_start', $new);
+    update_post_meta($post_id, WPBONO_RSVP_REMINDERS_META_SIG, $signature);
 }
 add_action('updated_postmeta', 'wpbono_rsvp_reminders_reset_on_reschedule', 10, 4);
 add_action('added_post_meta', 'wpbono_rsvp_reminders_reset_on_reschedule', 10, 4);
+
+/**
+ * One value covering both the single start and the whole repeat series, so a
+ * change to either is a single comparison.
+ */
+function wpbono_rsvp_reminders_schedule_signature($event_id) {
+    $start = (int) get_post_meta($event_id, 'evcal_srow', true);
+    $repeats = maybe_unserialize(get_post_meta($event_id, 'repeat_intervals', true));
+    return $start . ':' . md5(is_array($repeats) ? wp_json_encode($repeats) : '');
+}

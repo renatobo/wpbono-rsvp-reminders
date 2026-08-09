@@ -61,6 +61,10 @@ function wpbono_rsvp_reminders_deactivate() {
         wp_unschedule_event($timestamp, WPBONO_RSVP_REMINDERS_CRON);
     }
     wp_clear_scheduled_hook(WPBONO_RSVP_REMINDERS_CRON);
+
+    // A sweep interrupted by the deactivation would otherwise hold its lock for
+    // the full expiry, blocking the first tick after it is switched back on.
+    delete_transient('wpbono_rsvp_reminders_running');
 }
 register_deactivation_hook(__FILE__, 'wpbono_rsvp_reminders_deactivate');
 

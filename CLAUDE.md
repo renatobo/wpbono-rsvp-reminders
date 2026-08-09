@@ -60,16 +60,48 @@ silently re-consent people who declined.
   on a quiet night.
 - Each tick asks **"what is due now that hasn't gone yet"**, never "what falls
   in this hour". A window-based check would silently drop reminders whenever
-  cron ran late. A late or duplicated tick is therefore harmless.
+  cron ran late. A late or repeated tick is therefore harmless.
+- That holds for *sequential* ticks only. Two sweeps running **at once** would
+  both read the same empty marker and both send, so the sweep takes a 15 minute
+  transient lock (`wpbono_rsvp_reminders_running`). It expires on its own: a
+  fatal mid-sweep costs one hour, not every reminder from then on.
 - The schedule **self-heals** on `admin_init`: a database restore or another
   plugin's over-broad `wp_clear_scheduled_hook` can drop the entry without the
   plugin being deactivated, and reminders would stop with no symptom.
-- The sent marker (`_wpbono_reminder_sent` on the RSVP post, an array of lead
-  times in days) is written **before** the send is attempted. A mailer failure
-  costs one reminder rather than looping the same person every hour for days.
-  Trade accepted deliberately.
-- Sent markers are **cleared when an event's `evcal_srow` changes**, because a
+- The sent marker (`_wpbono_reminder_sent` on the RSVP post) is
+  `array( repeat index => array( lead times in days ) )`. It is written
+  **before** the send is attempted. A mailer failure costs one reminder rather
+  than looping the same person every hour for days. Trade accepted deliberately.
+  Before occurrence support the marker was a flat array of lead times; that
+  format is still read, as occurrence 0, so an upgrade does not re-mail everyone
+  already reminded. Do not drop that fallback.
+- Sent markers are **cleared when an event's schedule changes**, because a
   rescheduled event needs re-announcing to people who were told the old date.
+  Both `evcal_srow` and `repeat_intervals` count, compared as one signature
+  stored in `_wpbono_reminder_last_start`.
+- A **first run close to an event** sends only the shortest lead that is already
+  past, not every one of them an hour apart.
+
+## Repeating events
+
+EventON keeps only the **first** occurrence's start in `evcal_srow`; the series
+lives in `repeat_intervals`, a map of repeat index to `array(start, end)` in raw
+unix. An RSVP records which occurrence it is for in its own `repeat_interval`
+meta, absent meaning 0.
+
+So the sweep cannot filter events on `evcal_srow` alone: a weekly ride that
+began last year would never be selected again even though occurrence 40 is next
+Saturday. Repeating events are pulled in on the `evcal_repeat` flag and narrowed
+per occurrence in PHP, and eligible attendees are matched on `repeat_interval`
+(occurrence 0 also matching empty and missing, as EventON does in
+`class-event_rsvp.php:510`).
+
+`wpbono_rsvp_reminders_is_repeating()` mirrors `EVO_Event::is_repeating_event()`:
+the flag alone is not enough, a single-entry interval map is a one-off event
+that once had repeats.
+
+Raw unix values are used throughout, matching `evcal_srow` and what EventON
+stores, rather than the timezone-adjusted `get_repeats_adjusted()` variants.
 
 ## Lead times
 
