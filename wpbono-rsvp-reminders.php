@@ -3,7 +3,7 @@
  * Plugin Name: WPBono RSVP Reminders
  * Plugin URI: https://drocdesmo.com
  * Description: Scheduled reminder emails for EventON RSVP attendees, with a site-wide default lead time and a per-event override.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Renato Bonomini
  * Author URI: https://github.com/renatobo
  * License: GPL-3.0-or-later
@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WPBONO_RSVP_REMINDERS_VERSION', '1.0.1');
+define('WPBONO_RSVP_REMINDERS_VERSION', '1.0.2');
 define('WPBONO_RSVP_REMINDERS_DIR', plugin_dir_path(__FILE__));
 define('WPBONO_RSVP_REMINDERS_URL', plugin_dir_url(__FILE__));
 define('WPBONO_RSVP_REMINDERS_PAGE', 'wpbono-rsvp-reminders');
