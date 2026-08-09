@@ -3,14 +3,15 @@
  * Plugin Name: WPBono RSVP Reminders
  * Plugin URI: https://drocdesmo.com
  * Description: Scheduled reminder emails for EventON RSVP attendees, with a site-wide default lead time and a per-event override.
- * Version: 1.0.0
- * Author: RB
- * Author URI: https://drocdesmo.com
+ * Version: 1.0.1
+ * Author: Renato Bonomini
+ * Author URI: https://github.com/renatobo
  * License: GPL-3.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-3.0.html
  * Text Domain: wpbono-rsvp-reminders
  * Requires at least: 7.0
  * Requires PHP: 8.2
+ * Requires Plugins: eventon-rsvp
  * GitHub Plugin URI: https://github.com/renatobo/wpbono-rsvp-reminders
  * Primary Branch:    main
  * Release Asset:     true
@@ -24,7 +25,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WPBONO_RSVP_REMINDERS_VERSION', '1.0.0');
+define('WPBONO_RSVP_REMINDERS_VERSION', '1.0.1');
 define('WPBONO_RSVP_REMINDERS_DIR', plugin_dir_path(__FILE__));
 define('WPBONO_RSVP_REMINDERS_URL', plugin_dir_url(__FILE__));
 define('WPBONO_RSVP_REMINDERS_PAGE', 'wpbono-rsvp-reminders');
@@ -90,18 +91,66 @@ function wpbono_rsvp_reminders_ensure_schedule() {
 add_action('admin_init', 'wpbono_rsvp_reminders_ensure_schedule');
 
 /**
+ * Settings link on the Plugins screen, matching the other WPBono plugins.
+ */
+function wpbono_rsvp_reminders_action_links($links) {
+    array_unshift(
+        $links,
+        sprintf(
+            '<a href="%s">%s</a>',
+            esc_url(admin_url('options-general.php?page=' . WPBONO_RSVP_REMINDERS_PAGE)),
+            esc_html__('Settings', 'wpbono-rsvp-reminders')
+        )
+    );
+
+    return $links;
+}
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), 'wpbono_rsvp_reminders_action_links');
+add_filter('network_admin_plugin_action_links_' . plugin_basename(__FILE__), 'wpbono_rsvp_reminders_action_links');
+
+/**
  * EventON RSVP is a hard dependency: every code path reads its CPT and classes.
  */
 function wpbono_rsvp_reminders_has_eventon() {
     return class_exists('EVO_RSVP_CPT') && class_exists('EVORS_Event') && function_exists('EVORS');
 }
 
+/**
+ * The theme is a soft dependency: it builds the calendar invitation and
+ * supplies the default email logo, but reminders still send without it.
+ */
+function wpbono_rsvp_reminders_has_theme() {
+    return function_exists('wpbono_fse_theme_event_ics');
+}
+
+/**
+ * Dependency notices.
+ *
+ * "Requires Plugins" in the header covers the EventON RSVP add-on, but only for
+ * activation, and only for that add-on: the EventON core directory is named
+ * eventON, and core drops any slug that is not lowercase and hyphens, so it can
+ * never be declared there. This notice is what catches core being missing, or
+ * either being deactivated after this plugin was already running.
+ *
+ * There is no header for a theme dependency at all, so the theme is reported
+ * here too, as a warning rather than an error because it is not fatal.
+ */
 function wpbono_rsvp_reminders_dependency_notice() {
-    if (wpbono_rsvp_reminders_has_eventon() || !current_user_can('activate_plugins')) {
+    if (!current_user_can('activate_plugins')) {
         return;
     }
-    echo '<div class="notice notice-error"><p>';
-    echo esc_html__('WPBono RSVP Reminders needs the EventON RSVP add-on to be active. No reminders will be sent until it is.', 'wpbono-rsvp-reminders');
-    echo '</p></div>';
+
+    if (!wpbono_rsvp_reminders_has_eventon()) {
+        echo '<div class="notice notice-error"><p>';
+        echo esc_html__('WPBono RSVP Reminders needs EventON and its RSVP add-on to be active. No reminders will be sent until they are.', 'wpbono-rsvp-reminders');
+        echo '</p></div>';
+        return;
+    }
+
+    if (!wpbono_rsvp_reminders_has_theme()) {
+        echo '<div class="notice notice-warning"><p>';
+        echo esc_html__('WPBono RSVP Reminders is sending without the WPBono FSE theme, which builds the calendar invitation and supplies the email logo. Reminders still go out, just with no invite attached.', 'wpbono-rsvp-reminders');
+        echo '</p></div>';
+    }
 }
 add_action('admin_notices', 'wpbono_rsvp_reminders_dependency_notice');
