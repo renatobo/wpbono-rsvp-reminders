@@ -120,12 +120,19 @@ function wpbono_rsvp_reminders_attach_invite($rsvp, $event, $from, $to) {
 }
 
 /**
- * The logo for the top of the reminder: the one chosen in Settings, else the
- * one the theme bundles, else none.
+ * The logo for the top of the reminder.
  *
- * Deliberately never the Site Logo, which on this site is a white SVG: no mail
- * client renders SVG, and white would not show on a white card. The settings
- * screen says as much, but the fallback chain is the real guard.
+ * The theme owns which file this is, through wpbono_fse_theme_email_logo_url().
+ * Reaching into its directory layout by literal string is what this replaces:
+ * the theme renaming or moving its asset used to make reminders lose their logo
+ * with nothing connecting the two.
+ *
+ * The administrator's choice reaches that accessor through the theme's
+ * wpbono_fse_theme_email_logo filter, hooked in settings.php, so one setting
+ * drives the confirmation, the update notice and the reminder alike. Only when
+ * the theme is absent does this resolve the setting itself.
+ *
+ * Memoised: without it this ran once per reminder sent.
  */
 function wpbono_rsvp_reminders_logo_url() {
     static $url = null;
@@ -133,32 +140,32 @@ function wpbono_rsvp_reminders_logo_url() {
         return $url;
     }
 
-    $logo_id = (int) wpbono_rsvp_reminders_setting('logo_id');
-    if ($logo_id > 0) {
-        // Falls through to the theme logo if the attachment has been deleted.
-        $chosen = wp_get_attachment_image_url($logo_id, 'full');
-        if ($chosen) {
-            $url = $chosen;
-            return $url;
-        }
+    if (function_exists('wpbono_fse_theme_email_logo_url')) {
+        $url = wpbono_fse_theme_email_logo_url();
+        return $url;
     }
 
-    $url = wpbono_rsvp_reminders_theme_logo_url();
+    // No theme, so no accessor and no filter: honour the setting directly.
+    $url = wpbono_rsvp_reminders_setting_logo_url();
     return $url;
 }
 
 /**
- * Memoised because it is a filesystem stat, and the uncached version ran once
- * per reminder sent.
+ * The administrator's chosen logo as an absolute URL, or '' when unset.
+ *
+ * Resolved from the attachment ID at send time rather than from a stored URL,
+ * so moving the site to another domain does not leave every reminder pointing
+ * at the old one.
  */
-function wpbono_rsvp_reminders_theme_logo_url() {
-    static $url = null;
-    if ($url === null) {
-        $url = (function_exists('get_theme_file_path') && file_exists(get_theme_file_path('assets/img/email-logo.png')))
-            ? get_theme_file_uri('assets/img/email-logo.png')
-            : '';
+function wpbono_rsvp_reminders_setting_logo_url() {
+    $logo_id = (int) wpbono_rsvp_reminders_setting('logo_id');
+    if ($logo_id <= 0) {
+        return '';
     }
-    return $url;
+
+    // '' if the attachment has since been deleted, which falls back cleanly.
+    $url = wp_get_attachment_image_url($logo_id, 'medium');
+    return is_string($url) ? $url : '';
 }
 
 /**

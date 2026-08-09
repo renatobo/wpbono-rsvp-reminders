@@ -92,32 +92,86 @@ function wpbono_rsvp_reminders_sanitize($input) {
         $out['second_lead_days'] = 0;
     }
 
-    // The media modal is filtered to JPEG and PNG, but that is only the UI: the
-    // posted value is just an attachment ID, so the type is checked here too.
-    // Anything else (SVG above all, which no mail client renders) falls back to
-    // the theme logo rather than shipping a broken image to every attendee.
-    $out['logo_id'] = 0;
-    if (!empty($input['logo_id'])) {
-        $logo_id = absint($input['logo_id']);
-        if ($logo_id > 0 && in_array(get_post_mime_type($logo_id), array('image/jpeg', 'image/png'), true)) {
-            $out['logo_id'] = $logo_id;
-        } elseif (function_exists('add_settings_error')) {
-            // This callback runs from sanitize_option, so it fires for *any*
-            // update of this option, including from cron and the frontend where
-            // wp-admin/includes/template.php is not loaded.
-            add_settings_error(
-                WPBONO_RSVP_REMINDERS_OPTION,
-                'wpbono_logo_type',
-                __('The email logo must be a JPEG or PNG. That image was not saved.', 'wpbono-rsvp-reminders'),
-                'error'
-            );
-        }
-    }
+    $out['logo_id'] = wpbono_rsvp_reminders_sanitize_logo_id(isset($input['logo_id']) ? $input['logo_id'] : 0);
 
     $out['subject'] = isset($input['subject']) ? sanitize_text_field($input['subject']) : $defaults['subject'];
     $out['intro'] = isset($input['intro']) ? wp_kses_post($input['intro']) : $defaults['intro'];
 
     return $out;
+}
+
+/**
+ * Validate the chosen logo attachment.
+ *
+ * The media modal filters the library, but that is UI only: what actually posts
+ * is an attachment ID, so every rule is enforced again here. Each of these comes
+ * from a real failure rather than a hypothetical.
+ *
+ * - SVG is rejected outright. No mail client renders it, and this site's Site
+ *   Logo *is* an SVG, which makes it the most likely first pick. Saying so beats
+ *   ignoring the choice silently.
+ * - WebP is accepted with a warning. Outlook desktop will not render it, which
+ *   is why the theme's bundled file is a PNG even though it ships WebP
+ *   elsewhere. Whether that matters depends on the audience, so it is the
+ *   administrator's call, not a refusal.
+ * - The URL has to be absolute http(s). It is resolved from a mail client on
+ *   somebody's phone, where a site-relative path or a local file is useless.
+ *
+ * Note this runs from sanitize_option, so it fires on *any* update of the
+ * option, cron and frontend included, where wp-admin/includes/template.php is
+ * not loaded. Hence the function_exists guard on add_settings_error.
+ */
+function wpbono_rsvp_reminders_sanitize_logo_id($raw) {
+    $logo_id = absint($raw);
+    if ($logo_id <= 0) {
+        return 0;
+    }
+
+    $notice = function ($code, $message, $type) {
+        if (function_exists('add_settings_error')) {
+            add_settings_error(WPBONO_RSVP_REMINDERS_OPTION, $code, $message, $type);
+        }
+    };
+
+    $mime = get_post_mime_type($logo_id);
+
+    if ($mime === 'image/svg+xml') {
+        $notice(
+            'wpbono_logo_svg',
+            __('The email logo cannot be an SVG: no mail client renders it. Use a PNG or JPEG. That image was not saved.', 'wpbono-rsvp-reminders'),
+            'error'
+        );
+        return 0;
+    }
+
+    if (!in_array($mime, array('image/jpeg', 'image/png', 'image/webp'), true)) {
+        $notice(
+            'wpbono_logo_type',
+            __('The email logo must be a PNG or JPEG. That image was not saved.', 'wpbono-rsvp-reminders'),
+            'error'
+        );
+        return 0;
+    }
+
+    $url = wp_get_attachment_image_url($logo_id, 'medium');
+    if (!is_string($url) || !preg_match('#^https?://#i', $url)) {
+        $notice(
+            'wpbono_logo_url',
+            __('That image has no absolute web address, so it cannot load in an email. It was not saved.', 'wpbono-rsvp-reminders'),
+            'error'
+        );
+        return 0;
+    }
+
+    if ($mime === 'image/webp') {
+        $notice(
+            'wpbono_logo_webp',
+            __('Saved, but Outlook on Windows will not render a WebP logo. A PNG is safer.', 'wpbono-rsvp-reminders'),
+            'warning'
+        );
+    }
+
+    return $logo_id;
 }
 
 function wpbono_rsvp_reminders_menu() {
@@ -159,7 +213,9 @@ function wpbono_rsvp_reminders_media_picker_script() {
                 frame = wp.media({
                     title: choose.dataset.title,
                     button: { text: choose.dataset.button },
-                    // Mail clients do not render SVG and handle WebP unevenly.
+                    // Narrower than the server accepts, on purpose: sanitize
+                    // takes WebP with a warning, but there is no reason to
+                    // offer a format Outlook cannot render as if it were fine.
                     library: { type: ['image/jpeg', 'image/png'] },
                     multiple: false
                 });
@@ -300,14 +356,16 @@ function wpbono_rsvp_reminders_settings_page() {
                         </div>
                         <p class="description">
                             <?php
-                            if (wpbono_rsvp_reminders_theme_logo_url() !== '') {
-                                esc_html_e('Shown at the top of the reminder. Leave unset to use the logo bundled with the WPBono FSE theme.', 'wpbono-rsvp-reminders');
+                            if (function_exists('wpbono_fse_theme_email_logo_url')) {
+                                esc_html_e('Used by all three RSVP emails: the confirmation, the update notice and the reminder. Leave it unset to use the logo the WPBono FSE theme provides.', 'wpbono-rsvp-reminders');
                             } else {
-                                esc_html_e('Shown at the top of the reminder. Nothing is bundled with the active theme, so without one the reminder has no logo.', 'wpbono-rsvp-reminders');
+                                esc_html_e('Shown at the top of the reminder. The WPBono FSE theme is not active, so without one the reminder has no logo.', 'wpbono-rsvp-reminders');
                             }
                             ?>
                             <br />
-                            <?php esc_html_e('Use a PNG or JPEG around 420px wide. No mail client renders SVG, and a white logo will not show on the white card.', 'wpbono-rsvp-reminders'); ?>
+                            <?php esc_html_e('PNG or JPEG, around 420px wide. SVG is refused because no mail client renders it, and WebP is accepted but will not show in Outlook on Windows.', 'wpbono-rsvp-reminders'); ?>
+                            <br />
+                            <?php esc_html_e('The email card is white, so a white or transparent-on-light logo will be invisible. Pick a dark version.', 'wpbono-rsvp-reminders'); ?>
                         </p>
                     </td>
                 </tr>
@@ -384,6 +442,24 @@ function wpbono_rsvp_reminders_handle_actions() {
     }
 }
 add_action('admin_init', 'wpbono_rsvp_reminders_handle_actions');
+
+/**
+ * Point the theme's RSVP emails at the administrator's chosen logo.
+ *
+ * The theme owns the default and the accessor; this only supplies a
+ * replacement. Hooking it here rather than resolving the logo inside the mailer
+ * is what makes one setting drive all three RSVP emails — confirmation, update
+ * notice, reminder — instead of the reminder alone.
+ *
+ * An unusable value returns the theme's default untouched, and the theme
+ * re-checks that independently, so a bad setting degrades to the bundled logo
+ * rather than to a broken image.
+ */
+function wpbono_rsvp_reminders_filter_email_logo($url) {
+    $custom = wpbono_rsvp_reminders_setting_logo_url();
+    return $custom !== '' ? $custom : $url;
+}
+add_filter('wpbono_fse_theme_email_logo', 'wpbono_rsvp_reminders_filter_email_logo');
 
 /**
  * Flip EventON's "Receive updates about event" default to Yes on the RSVP form.

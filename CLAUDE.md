@@ -142,18 +142,33 @@ stores, rather than the timezone-adjusted `get_repeats_adjusted()` variants.
   `TEMPLATEPATH . '/' . 'eventon' . 'templates/email/'`, missing a slash, so it
   looks for a directory called `eventontemplates`. Branding has to live inside
   the table, not in the wrapper.
-- Logo is chosen in Settings (`logo_id`, an attachment ID), falling back to the
-  theme's bundled `assets/img/email-logo.png`, then to no logo at all. Do **not**
-  switch to the Site Logo: it is a white SVG
-  (`DROC_tagline_white_horizontal-white.svg`), and no mail client renders SVG,
-  nor would white show on a white card. That is why the picker is restricted to
-  JPEG and PNG **twice**: the media modal filters the library, and
-  `wpbono_rsvp_reminders_sanitize()` re-checks the mime type, because the posted
-  value is only an ID and the modal filter is UI, not enforcement.
+- Logo is chosen in Settings (`logo_id`, an **attachment ID**, never a URL, so a
+  domain change doesn't break every email). The theme decides the default and
+  owns the file: this plugin calls `wpbono_fse_theme_email_logo_url()` and feeds
+  the administrator's choice back through the theme's
+  `wpbono_fse_theme_email_logo` filter. **No literal theme asset paths here** —
+  reaching into `assets/img/email-logo.png` by string is what that replaced,
+  because the theme renaming its file used to strip the logo with nothing
+  connecting the two. Hooking the filter (rather than resolving the logo in the
+  mailer) is also what makes one setting drive **all three** RSVP emails, not
+  just the reminder.
+- Do **not** switch to the Site Logo: it is a white SVG
+  (`DROC_tagline_white_horizontal-white.svg`), no mail client renders SVG, and
+  white would be invisible on the white card anyway.
+- Validation is enforced in `wpbono_rsvp_reminders_sanitize_logo_id()`, not in
+  the media modal: the modal filters the library, but what posts is only an ID.
+  SVG is **refused** with its own message (the Site Logo being an SVG makes it
+  the likely first pick, so silence would be baffling); WebP is **accepted with
+  a warning** because Outlook on Windows won't render it, which is why the
+  theme's bundled file is PNG though it ships WebP elsewhere; the resolved URL
+  must be absolute http(s), since it loads from a phone's mail client. The modal
+  is deliberately *narrower* than the server: it offers JPEG and PNG only.
 - That sanitize callback runs from `sanitize_option`, so it fires on **every**
   update of the settings option, cron and frontend included. Anything in it that
   touches `wp-admin/includes/` has to be guarded with `function_exists` —
-  `add_settings_error()` already is. This bit once.
+  `add_settings_error()` already is. This bit once. Note the corollary: the
+  callback is registered on `admin_init`, so an `update_option()` from cron or
+  the frontend bypasses validation entirely. Don't write this option from there.
 - The invite is attached via `phpmailer_init` + `addStringAttachment`, never
   `wp_mail`'s attachments array. That array takes file paths only, and the .ics
   names the attendee, so writing it under `uploads/` would expose member email
