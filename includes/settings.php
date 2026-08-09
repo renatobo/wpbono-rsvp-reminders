@@ -58,7 +58,7 @@ add_action('delete_option_' . WPBONO_RSVP_REMINDERS_OPTION, 'wpbono_rsvp_reminde
 
 function wpbono_rsvp_reminders_setting($key) {
     $settings = wpbono_rsvp_reminders_settings();
-    return isset($settings[$key]) ? $settings[$key] : null;
+    return $settings[$key] ?? null;
 }
 
 function wpbono_rsvp_reminders_register_settings() {
@@ -84,18 +84,18 @@ function wpbono_rsvp_reminders_sanitize($input) {
 
     // A lead time of 0 would mean "send at the moment the event starts", which
     // is never what anyone wants, so the primary one is clamped to at least 1.
-    $out['lead_days'] = isset($input['lead_days']) ? max(1, min(60, (int) $input['lead_days'])) : $defaults['lead_days'];
-    $out['second_lead_days'] = isset($input['second_lead_days']) ? max(0, min(60, (int) $input['second_lead_days'])) : 0;
+    $out['lead_days'] = max(1, min(60, (int) ($input['lead_days'] ?? $defaults['lead_days'])));
+    $out['second_lead_days'] = max(0, min(60, (int) ($input['second_lead_days'] ?? 0)));
 
     // The second reminder has to land after the first, or the two collapse.
     if ($out['second_lead_days'] >= $out['lead_days']) {
         $out['second_lead_days'] = 0;
     }
 
-    $out['logo_id'] = wpbono_rsvp_reminders_sanitize_logo_id(isset($input['logo_id']) ? $input['logo_id'] : 0);
+    $out['logo_id'] = wpbono_rsvp_reminders_sanitize_logo_id($input['logo_id'] ?? 0);
 
-    $out['subject'] = isset($input['subject']) ? sanitize_text_field($input['subject']) : $defaults['subject'];
-    $out['intro'] = isset($input['intro']) ? wp_kses_post($input['intro']) : $defaults['intro'];
+    $out['subject'] = sanitize_text_field($input['subject'] ?? $defaults['subject']);
+    $out['intro'] = wp_kses_post($input['intro'] ?? $defaults['intro']);
 
     return $out;
 }
@@ -121,7 +121,7 @@ function wpbono_rsvp_reminders_sanitize($input) {
  * option, cron and frontend included, where wp-admin/includes/template.php is
  * not loaded. Hence the function_exists guard on add_settings_error.
  */
-function wpbono_rsvp_reminders_sanitize_logo_id($raw) {
+function wpbono_rsvp_reminders_sanitize_logo_id($raw): int {
     $logo_id = absint($raw);
     if ($logo_id <= 0) {
         return 0;

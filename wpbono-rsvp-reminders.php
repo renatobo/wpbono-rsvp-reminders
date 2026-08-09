@@ -111,7 +111,7 @@ add_filter('network_admin_plugin_action_links_' . plugin_basename(__FILE__), 'wp
 /**
  * EventON RSVP is a hard dependency: every code path reads its CPT and classes.
  */
-function wpbono_rsvp_reminders_has_eventon() {
+function wpbono_rsvp_reminders_has_eventon(): bool {
     return class_exists('EVO_RSVP_CPT') && class_exists('EVORS_Event') && function_exists('EVORS');
 }
 
@@ -119,7 +119,7 @@ function wpbono_rsvp_reminders_has_eventon() {
  * The theme is a soft dependency: it builds the calendar invitation and
  * supplies the default email logo, but reminders still send without it.
  */
-function wpbono_rsvp_reminders_has_theme() {
+function wpbono_rsvp_reminders_has_theme(): bool {
     return function_exists('wpbono_fse_theme_event_ics');
 }
 

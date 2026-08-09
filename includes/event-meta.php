@@ -82,7 +82,7 @@ function wpbono_rsvp_reminders_save_meta($post_id) {
         delete_post_meta($post_id, WPBONO_RSVP_REMINDERS_META_OFF);
     }
 
-    $lead = isset($_POST['wpbono_reminder_lead_days']) ? trim((string) wp_unslash($_POST['wpbono_reminder_lead_days'])) : '';
+    $lead = trim((string) wp_unslash($_POST['wpbono_reminder_lead_days'] ?? ''));
     if ($lead === '') {
         delete_post_meta($post_id, WPBONO_RSVP_REMINDERS_META_LEAD);
     } else {
@@ -94,7 +94,7 @@ add_action('save_post_ajde_events', 'wpbono_rsvp_reminders_save_meta');
 /**
  * Lead time in days for one event: its own override, else the site default.
  */
-function wpbono_rsvp_reminders_lead_days($event_id) {
+function wpbono_rsvp_reminders_lead_days($event_id): int {
     $lead = get_post_meta($event_id, WPBONO_RSVP_REMINDERS_META_LEAD, true);
     if ($lead !== '' && (int) $lead > 0) {
         return (int) $lead;
@@ -102,7 +102,7 @@ function wpbono_rsvp_reminders_lead_days($event_id) {
     return max(1, (int) wpbono_rsvp_reminders_setting('lead_days'));
 }
 
-function wpbono_rsvp_reminders_event_disabled($event_id) {
+function wpbono_rsvp_reminders_event_disabled($event_id): bool {
     return get_post_meta($event_id, WPBONO_RSVP_REMINDERS_META_OFF, true) === 'yes';
 }
 
@@ -116,7 +116,7 @@ function wpbono_rsvp_reminders_event_disabled($event_id) {
  *
  * no_found_rows must stay off here: found_posts is precisely what it suppresses.
  */
-function wpbono_rsvp_reminders_event_sent_count($event_id) {
+function wpbono_rsvp_reminders_event_sent_count($event_id): int {
     $query = new WP_Query(array(
         'post_type'              => 'evo-rsvp',
         'post_status'            => 'any',

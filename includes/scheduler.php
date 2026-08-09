@@ -91,7 +91,7 @@ add_action(WPBONO_RSVP_REMINDERS_CRON, 'wpbono_rsvp_reminders_run');
  * again even though occurrence 40 is next Saturday. Those are pulled in on the
  * repeat flag instead and narrowed down per occurrence in PHP.
  */
-function wpbono_rsvp_reminders_candidate_events($now, $lookahead) {
+function wpbono_rsvp_reminders_candidate_events($now, $lookahead): array {
     $events = get_posts(array(
         'post_type'      => 'ajde_events',
         'post_status'    => 'publish',
@@ -137,7 +137,7 @@ function wpbono_rsvp_reminders_candidate_events($now, $lookahead) {
  * WP_Query returns before it is ever consulted, so passing it is inert and
  * reads as though priming had been considered and declined.
  */
-function wpbono_rsvp_reminders_prime_meta($ids) {
+function wpbono_rsvp_reminders_prime_meta($ids): void {
     if (!empty($ids)) {
         update_meta_cache('post', $ids);
     }
@@ -151,7 +151,7 @@ function wpbono_rsvp_reminders_prime_meta($ids) {
  * picked up once it enters the window, which is still before its own send time
  * as long as the override is under the site maximum of 60 days.
  */
-function wpbono_rsvp_reminders_lead_set() {
+function wpbono_rsvp_reminders_lead_set(): array {
     $leads = array((int) wpbono_rsvp_reminders_setting('lead_days'));
     $second = (int) wpbono_rsvp_reminders_setting('second_lead_days');
     if ($second > 0) {
@@ -170,13 +170,13 @@ function wpbono_rsvp_reminders_lead_set() {
  * values are used throughout, matching evcal_srow and what EventON stores,
  * rather than the timezone-adjusted variants.
  */
-function wpbono_rsvp_reminders_occurrences($event_id, $now, $lookahead) {
+function wpbono_rsvp_reminders_occurrences($event_id, $now, $lookahead): array {
     $occurrences = array();
 
     if (wpbono_rsvp_reminders_is_repeating($event_id)) {
         $repeats = maybe_unserialize(get_post_meta($event_id, 'repeat_intervals', true));
         foreach ((array) $repeats as $ri => $pair) {
-            $start = is_array($pair) && isset($pair[0]) ? (int) $pair[0] : 0;
+            $start = is_array($pair) ? (int) ($pair[0] ?? 0) : 0;
             if ($start > $now && $start <= $lookahead) {
                 $occurrences[(int) $ri] = $start;
             }
@@ -195,7 +195,7 @@ function wpbono_rsvp_reminders_occurrences($event_id, $now, $lookahead) {
  * Mirrors EVO_Event::is_repeating_event(): the flag alone is not enough, a
  * single-entry interval map is a one-off event that once had repeats.
  */
-function wpbono_rsvp_reminders_is_repeating($event_id) {
+function wpbono_rsvp_reminders_is_repeating($event_id): bool {
     if (get_post_meta($event_id, 'evcal_repeat', true) !== 'yes') {
         return false;
     }
@@ -286,12 +286,12 @@ function wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead, &$budg
  * support it was a flat array of lead days, which is read here as occurrence 0
  * so an upgrade does not re-send to everyone already reminded.
  */
-function wpbono_rsvp_reminders_sent_leads($rsvp_id, $ri = 0) {
+function wpbono_rsvp_reminders_sent_leads($rsvp_id, $ri = 0): array {
     $sent = wpbono_rsvp_reminders_sent_map($rsvp_id);
     return isset($sent[(int) $ri]) ? array_map('intval', $sent[(int) $ri]) : array();
 }
 
-function wpbono_rsvp_reminders_sent_map($rsvp_id) {
+function wpbono_rsvp_reminders_sent_map($rsvp_id): array {
     $sent = get_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT, true);
     if (!is_array($sent) || empty($sent)) {
         return array();
@@ -355,7 +355,7 @@ function wpbono_rsvp_reminders_ri_clause($ri) {
     );
 }
 
-function wpbono_rsvp_reminders_rsvp_ids($meta_query) {
+function wpbono_rsvp_reminders_rsvp_ids($meta_query): array {
     $ids = get_posts(array(
         'post_type'      => 'evo-rsvp',
         'post_status'    => 'any',
@@ -408,7 +408,7 @@ add_action('added_post_meta', 'wpbono_rsvp_reminders_reset_on_reschedule', 10, 4
  * One value covering both the single start and the whole repeat series, so a
  * change to either is a single comparison.
  */
-function wpbono_rsvp_reminders_schedule_signature($event_id) {
+function wpbono_rsvp_reminders_schedule_signature($event_id): string {
     $start = (int) get_post_meta($event_id, 'evcal_srow', true);
     $repeats = maybe_unserialize(get_post_meta($event_id, 'repeat_intervals', true));
     return $start . ':' . md5(is_array($repeats) ? wp_json_encode($repeats) : '');

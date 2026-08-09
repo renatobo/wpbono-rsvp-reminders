@@ -134,7 +134,7 @@ function wpbono_rsvp_reminders_attach_invite($rsvp, $event, $from, $to) {
  *
  * Memoised: without it this ran once per reminder sent.
  */
-function wpbono_rsvp_reminders_logo_url() {
+function wpbono_rsvp_reminders_logo_url(): string {
     static $url = null;
     if ($url !== null) {
         return $url;
@@ -157,7 +157,7 @@ function wpbono_rsvp_reminders_logo_url() {
  * so moving the site to another domain does not leave every reminder pointing
  * at the old one.
  */
-function wpbono_rsvp_reminders_setting_logo_url() {
+function wpbono_rsvp_reminders_setting_logo_url(): string {
     $logo_id = (int) wpbono_rsvp_reminders_setting('logo_id');
     if ($logo_id <= 0) {
         return '';
@@ -179,8 +179,8 @@ function wpbono_rsvp_reminders_body($event, $rsvp, $intro) {
     $location = '';
     if ($data = $event->get_location_data()) {
         $location = implode(' - ', array_filter(array(
-            !empty($data['name']) ? $data['name'] : '',
-            !empty($data['location_address']) ? $data['location_address'] : '',
+            $data['name'] ?? '',
+            $data['location_address'] ?? '',
         )));
     }
 
