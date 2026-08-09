@@ -81,6 +81,27 @@ silently re-consent people who declined.
   stored in `_wpbono_reminder_last_start`.
 - A **first run close to an event** sends only the shortest lead that is already
   past, not every one of them an hour apart.
+- A tick sends at most **25 reminders** (`wpbono_rsvp_reminders_max_per_tick`).
+  Sending is inline, one SMTP handshake each, so a popular event would otherwise
+  outlast `max_execution_time` — and because the marker is written *before* the
+  send, everyone past the cutoff would be marked reminded and never mailed. The
+  remainder is still due an hour later, which is exactly what the due-check
+  model is for. Do not remove this cap without moving sending off the tick.
+- Both sweep queries are bounded (200 events, 500 attendees) and **log when they
+  hit the cap**, because a silent truncation here reads as "some people just
+  didn't get one".
+
+## Query shape
+
+`fields => 'ids'` queries return from `WP_Query` *before* it primes any caches
+(`class-wp-query.php:3326`), so passing `update_post_meta_cache` alongside them
+does nothing at all. Where the sweep then reads meta off those IDs it calls
+`wpbono_rsvp_reminders_prime_meta()` explicitly; without it every read is its
+own query. Don't "tidy" that back into a query arg.
+
+The edit screen's reminded-count is a `found_posts` count, not a fetch-and-tally
+loop. It must **not** set `no_found_rows`, which is precisely what suppresses
+`found_posts`.
 
 ## Repeating events
 
@@ -121,9 +142,18 @@ stores, rather than the timezone-adjusted `get_repeats_adjusted()` variants.
   `TEMPLATEPATH . '/' . 'eventon' . 'templates/email/'`, missing a slash, so it
   looks for a directory called `eventontemplates`. Branding has to live inside
   the table, not in the wrapper.
-- Logo is the theme's bundled `assets/img/email-logo.png`. Do **not** switch to
-  the Site Logo: it is a white SVG (`DROC_tagline_white_horizontal-white.svg`),
-  and no mail client renders SVG, nor would white show on a white card.
+- Logo is chosen in Settings (`logo_id`, an attachment ID), falling back to the
+  theme's bundled `assets/img/email-logo.png`, then to no logo at all. Do **not**
+  switch to the Site Logo: it is a white SVG
+  (`DROC_tagline_white_horizontal-white.svg`), and no mail client renders SVG,
+  nor would white show on a white card. That is why the picker is restricted to
+  JPEG and PNG **twice**: the media modal filters the library, and
+  `wpbono_rsvp_reminders_sanitize()` re-checks the mime type, because the posted
+  value is only an ID and the modal filter is UI, not enforcement.
+- That sanitize callback runs from `sanitize_option`, so it fires on **every**
+  update of the settings option, cron and frontend included. Anything in it that
+  touches `wp-admin/includes/` has to be guarded with `function_exists` —
+  `add_settings_error()` already is. This bit once.
 - The invite is attached via `phpmailer_init` + `addStringAttachment`, never
   `wp_mail`'s attachments array. That array takes file paths only, and the .ics
   names the attendee, so writing it under `uploads/` would expose member email

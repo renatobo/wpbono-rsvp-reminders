@@ -11,6 +11,12 @@ const WPBONO_RSVP_REMINDERS_META_SENT = '_wpbono_reminder_sent';
 const WPBONO_RSVP_REMINDERS_META_SIG = '_wpbono_reminder_last_start';
 const WPBONO_RSVP_REMINDERS_LOCK = 'wpbono_rsvp_reminders_running';
 
+// Both queries are bounded, and both would truncate silently. Hitting either
+// cap is logged rather than left to be discovered as "some people never got a
+// reminder".
+const WPBONO_RSVP_REMINDERS_EVENT_LIMIT = 200;
+const WPBONO_RSVP_REMINDERS_RSVP_LIMIT = 500;
+
 /**
  * One tick.
  *
@@ -46,10 +52,31 @@ function wpbono_rsvp_reminders_run() {
         $leads = wpbono_rsvp_reminders_lead_set();
         $lookahead = $now + (max($leads) * DAY_IN_SECONDS);
 
-        foreach (wpbono_rsvp_reminders_candidate_events($now, $lookahead) as $event_id) {
-            wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead);
+        // Sending is inline and one SMTP handshake each, so a popular event can
+        // outlast max_execution_time. That would be silent data loss rather
+        // than a retry: the marker is written before the send, so everyone past
+        // the cutoff would be recorded as reminded and never mailed. Capping
+        // the tick keeps it well inside the limit, and the rest is simply still
+        // due an hour later, which the due-check model already handles.
+        $budget = (int) apply_filters('wpbono_rsvp_reminders_max_per_tick', 25);
+
+        $events = wpbono_rsvp_reminders_candidate_events($now, $lookahead);
+        if (count($events) >= WPBONO_RSVP_REMINDERS_EVENT_LIMIT) {
+            wpbono_rsvp_reminders_log('', '', 0, 'candidate events hit the ' . WPBONO_RSVP_REMINDERS_EVENT_LIMIT . ' row cap');
+        }
+
+        foreach ($events as $event_id) {
+            if ($budget <= 0) {
+                break;
+            }
+            wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead, $budget);
+        }
+
+        if ($budget <= 0) {
+            wpbono_rsvp_reminders_log('', '', 0, 'tick budget spent, resuming next hour');
         }
     } finally {
+        wpbono_rsvp_reminders_log_flush();
         delete_transient(WPBONO_RSVP_REMINDERS_LOCK);
     }
 }
@@ -65,15 +92,13 @@ add_action(WPBONO_RSVP_REMINDERS_CRON, 'wpbono_rsvp_reminders_run');
  * repeat flag instead and narrowed down per occurrence in PHP.
  */
 function wpbono_rsvp_reminders_candidate_events($now, $lookahead) {
-    return get_posts(array(
-        'post_type'              => 'ajde_events',
-        'post_status'            => 'publish',
-        'posts_per_page'         => 200,
-        'fields'                 => 'ids',
-        'no_found_rows'          => true,
-        'update_post_meta_cache' => false,
-        'update_post_term_cache' => false,
-        'meta_query'             => array(
+    $events = get_posts(array(
+        'post_type'      => 'ajde_events',
+        'post_status'    => 'publish',
+        'posts_per_page' => WPBONO_RSVP_REMINDERS_EVENT_LIMIT,
+        'fields'         => 'ids',
+        'no_found_rows'  => true,
+        'meta_query'     => array(
             'relation' => 'AND',
             array(
                 'key'     => 'evcal_srow',
@@ -96,6 +121,26 @@ function wpbono_rsvp_reminders_candidate_events($now, $lookahead) {
             ),
         ),
     ));
+
+    // Every candidate then has several meta values read off it. A fields=>ids
+    // query returns before WP_Query primes any caches (class-wp-query.php:3326),
+    // so without this each of those reads is its own query.
+    wpbono_rsvp_reminders_prime_meta($events);
+
+    return $events;
+}
+
+/**
+ * Prime the post meta cache for a set of IDs.
+ *
+ * update_post_meta_cache is not the way to do this after a fields=>ids query:
+ * WP_Query returns before it is ever consulted, so passing it is inert and
+ * reads as though priming had been considered and declined.
+ */
+function wpbono_rsvp_reminders_prime_meta($ids) {
+    if (!empty($ids)) {
+        update_meta_cache('post', $ids);
+    }
 }
 
 /**
@@ -158,7 +203,7 @@ function wpbono_rsvp_reminders_is_repeating($event_id) {
     return is_array($repeats) && count($repeats) > 1;
 }
 
-function wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead) {
+function wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead, &$budget = null) {
     if (wpbono_rsvp_reminders_event_disabled($event_id)) {
         return;
     }
@@ -174,6 +219,10 @@ function wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead) {
     }
 
     foreach (wpbono_rsvp_reminders_occurrences($event_id, $now, $lookahead) as $ri => $start) {
+        if ($budget !== null && $budget <= 0) {
+            return;
+        }
+
         $due = array();
         foreach ($leads as $lead) {
             if ($now >= ($start - ($lead * DAY_IN_SECONDS))) {
@@ -188,7 +237,16 @@ function wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead) {
         // reminder is never sent the long one afterwards.
         rsort($due);
 
-        foreach (wpbono_rsvp_reminders_eligible_rsvps($event_id, $repeating ? $ri : null) as $rsvp_id) {
+        $rsvps = wpbono_rsvp_reminders_eligible_rsvps($event_id, $repeating ? $ri : null);
+        if (count($rsvps) >= WPBONO_RSVP_REMINDERS_RSVP_LIMIT) {
+            wpbono_rsvp_reminders_log(get_the_title($event_id), '', 0, 'attendees hit the ' . WPBONO_RSVP_REMINDERS_RSVP_LIMIT . ' row cap');
+        }
+
+        foreach ($rsvps as $rsvp_id) {
+            if ($budget !== null && $budget <= 0) {
+                return;
+            }
+
             $sent = wpbono_rsvp_reminders_sent_leads($rsvp_id, $ri);
 
             // Nothing has gone yet and several leads are already past: this is
@@ -212,6 +270,9 @@ function wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead) {
                 wpbono_rsvp_reminders_mark_sent($rsvp_id, $ri, $sent);
 
                 wpbono_rsvp_reminders_send($rsvp_id, $event_id, $lead);
+                if ($budget !== null) {
+                    $budget--;
+                }
                 break; // one email per attendee per occurrence per tick
             }
         }
@@ -295,16 +356,19 @@ function wpbono_rsvp_reminders_ri_clause($ri) {
 }
 
 function wpbono_rsvp_reminders_rsvp_ids($meta_query) {
-    return get_posts(array(
-        'post_type'              => 'evo-rsvp',
-        'post_status'            => 'any',
-        'posts_per_page'         => 500,
-        'fields'                 => 'ids',
-        'no_found_rows'          => true,
-        'update_post_meta_cache' => false,
-        'update_post_term_cache' => false,
-        'meta_query'             => $meta_query,
+    $ids = get_posts(array(
+        'post_type'      => 'evo-rsvp',
+        'post_status'    => 'any',
+        'posts_per_page' => WPBONO_RSVP_REMINDERS_RSVP_LIMIT,
+        'fields'         => 'ids',
+        'no_found_rows'  => true,
+        'meta_query'     => $meta_query,
     ));
+
+    // The sweep reads the sent marker off every one of these.
+    wpbono_rsvp_reminders_prime_meta($ids);
+
+    return $ids;
 }
 
 /**

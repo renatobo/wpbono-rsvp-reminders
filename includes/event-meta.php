@@ -106,21 +106,30 @@ function wpbono_rsvp_reminders_event_disabled($event_id) {
     return get_post_meta($event_id, WPBONO_RSVP_REMINDERS_META_OFF, true) === 'yes';
 }
 
+/**
+ * How many attendees on this event have already had a reminder.
+ *
+ * Counted in the database rather than fetched and tallied. The previous version
+ * pulled every RSVP with posts_per_page -1 and then read the marker one row at
+ * a time, which is 106 queries on the busiest event to render one sentence on
+ * the edit screen.
+ *
+ * no_found_rows must stay off here: found_posts is precisely what it suppresses.
+ */
 function wpbono_rsvp_reminders_event_sent_count($event_id) {
-    $rsvps = get_posts(array(
-        'post_type'      => 'evo-rsvp',
-        'posts_per_page' => -1,
-        'fields'         => 'ids',
-        'meta_query'     => array(
+    $query = new WP_Query(array(
+        'post_type'              => 'evo-rsvp',
+        'post_status'            => 'any',
+        'posts_per_page'         => 1,
+        'fields'                 => 'ids',
+        'update_post_meta_cache' => false,
+        'update_post_term_cache' => false,
+        'meta_query'             => array(
+            'relation' => 'AND',
             array('key' => 'e_id', 'value' => $event_id),
+            array('key' => WPBONO_RSVP_REMINDERS_META_SENT, 'compare' => 'EXISTS'),
         ),
     ));
 
-    $count = 0;
-    foreach ($rsvps as $rsvp_id) {
-        if (get_post_meta($rsvp_id, '_wpbono_reminder_sent', true)) {
-            $count++;
-        }
-    }
-    return $count;
+    return (int) $query->found_posts;
 }

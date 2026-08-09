@@ -15,16 +15,46 @@ function wpbono_rsvp_reminders_defaults() {
         'require_updates_optin' => 'yes',
         'default_updates_yes'  => 'yes',
         'attach_invite'        => 'yes',
+        'logo_id'              => 0, // 0 falls back to the theme's bundled logo
         'subject'              => __('Reminder: {event-name} is on {event-date}', 'wpbono-rsvp-reminders'),
         'intro'                => __('A quick reminder that you are on the list for this one. See you there.', 'wpbono-rsvp-reminders'),
         'dry_run'              => 'no',
     );
 }
 
-function wpbono_rsvp_reminders_settings() {
-    $saved = get_option(WPBONO_RSVP_REMINDERS_OPTION, array());
-    return wp_parse_args(is_array($saved) ? $saved : array(), wpbono_rsvp_reminders_defaults());
+/**
+ * Settings, memoised for the request.
+ *
+ * Every wpbono_rsvp_reminders_setting() call used to rebuild this: an option
+ * read, a wp_parse_args, and the two __() calls inside defaults(). One reminder
+ * does that four times, and evors_form_fields_array runs it on the public (so
+ * uncached) AJAX request that renders an RSVP form.
+ */
+function &wpbono_rsvp_reminders_settings_cache() {
+    static $settings = null;
+    return $settings;
 }
+
+function wpbono_rsvp_reminders_settings() {
+    $cache = &wpbono_rsvp_reminders_settings_cache();
+    if ($cache === null) {
+        $saved = get_option(WPBONO_RSVP_REMINDERS_OPTION, array());
+        $cache = wp_parse_args(is_array($saved) ? $saved : array(), wpbono_rsvp_reminders_defaults());
+    }
+    return $cache;
+}
+
+/**
+ * A save happens in the same request that may go on to read the settings back,
+ * so the memo has to be dropped when the option moves under it.
+ */
+function wpbono_rsvp_reminders_flush_settings_cache() {
+    $cache = &wpbono_rsvp_reminders_settings_cache();
+    $cache = null;
+}
+add_action('update_option_' . WPBONO_RSVP_REMINDERS_OPTION, 'wpbono_rsvp_reminders_flush_settings_cache');
+add_action('add_option_' . WPBONO_RSVP_REMINDERS_OPTION, 'wpbono_rsvp_reminders_flush_settings_cache');
+add_action('delete_option_' . WPBONO_RSVP_REMINDERS_OPTION, 'wpbono_rsvp_reminders_flush_settings_cache');
 
 function wpbono_rsvp_reminders_setting($key) {
     $settings = wpbono_rsvp_reminders_settings();
@@ -62,6 +92,28 @@ function wpbono_rsvp_reminders_sanitize($input) {
         $out['second_lead_days'] = 0;
     }
 
+    // The media modal is filtered to JPEG and PNG, but that is only the UI: the
+    // posted value is just an attachment ID, so the type is checked here too.
+    // Anything else (SVG above all, which no mail client renders) falls back to
+    // the theme logo rather than shipping a broken image to every attendee.
+    $out['logo_id'] = 0;
+    if (!empty($input['logo_id'])) {
+        $logo_id = absint($input['logo_id']);
+        if ($logo_id > 0 && in_array(get_post_mime_type($logo_id), array('image/jpeg', 'image/png'), true)) {
+            $out['logo_id'] = $logo_id;
+        } elseif (function_exists('add_settings_error')) {
+            // This callback runs from sanitize_option, so it fires for *any*
+            // update of this option, including from cron and the frontend where
+            // wp-admin/includes/template.php is not loaded.
+            add_settings_error(
+                WPBONO_RSVP_REMINDERS_OPTION,
+                'wpbono_logo_type',
+                __('The email logo must be a JPEG or PNG. That image was not saved.', 'wpbono-rsvp-reminders'),
+                'error'
+            );
+        }
+    }
+
     $out['subject'] = isset($input['subject']) ? sanitize_text_field($input['subject']) : $defaults['subject'];
     $out['intro'] = isset($input['intro']) ? wp_kses_post($input['intro']) : $defaults['intro'];
 
@@ -69,15 +121,69 @@ function wpbono_rsvp_reminders_sanitize($input) {
 }
 
 function wpbono_rsvp_reminders_menu() {
-    add_options_page(
+    $hook = add_options_page(
         __('RSVP Reminders', 'wpbono-rsvp-reminders'),
         __('RSVP Reminders', 'wpbono-rsvp-reminders'),
         'manage_options',
         'wpbono-rsvp-reminders',
         'wpbono_rsvp_reminders_settings_page'
     );
+    add_action('admin_print_footer_scripts-' . $hook, 'wpbono_rsvp_reminders_media_picker_script');
+    add_action('load-' . $hook, 'wpbono_rsvp_reminders_settings_assets');
 }
 add_action('admin_menu', 'wpbono_rsvp_reminders_menu');
+
+/**
+ * The media modal is heavy, so it loads on this one screen rather than site-wide.
+ */
+function wpbono_rsvp_reminders_settings_assets() {
+    wp_enqueue_media();
+}
+
+function wpbono_rsvp_reminders_media_picker_script() {
+    ?>
+    <script>
+    (function () {
+        var wrap = document.getElementById('wpbono-logo-field');
+        if (!wrap || !window.wp || !wp.media) { return; }
+
+        var input = wrap.querySelector('input[type=hidden]');
+        var preview = wrap.querySelector('.wpbono-logo-preview');
+        var choose = wrap.querySelector('.wpbono-logo-choose');
+        var clear = wrap.querySelector('.wpbono-logo-clear');
+        var frame;
+
+        choose.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (!frame) {
+                frame = wp.media({
+                    title: choose.dataset.title,
+                    button: { text: choose.dataset.button },
+                    // Mail clients do not render SVG and handle WebP unevenly.
+                    library: { type: ['image/jpeg', 'image/png'] },
+                    multiple: false
+                });
+                frame.on('select', function () {
+                    var img = frame.state().get('selection').first().toJSON();
+                    input.value = img.id;
+                    preview.src = (img.sizes && img.sizes.medium) ? img.sizes.medium.url : img.url;
+                    preview.hidden = false;
+                    clear.hidden = false;
+                });
+            }
+            frame.open();
+        });
+
+        clear.addEventListener('click', function (e) {
+            e.preventDefault();
+            input.value = '0';
+            preview.hidden = true;
+            clear.hidden = true;
+        });
+    }());
+    </script>
+    <?php
+}
 
 function wpbono_rsvp_reminders_settings_page() {
     if (!current_user_can('manage_options')) {
@@ -165,6 +271,43 @@ function wpbono_rsvp_reminders_settings_page() {
                                 esc_html_e('Unavailable: this needs the WPBono FSE theme, which builds the invitation.', 'wpbono-rsvp-reminders');
                             }
                             ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php esc_html_e('Email logo', 'wpbono-rsvp-reminders'); ?></th>
+                    <td>
+                        <?php
+                        $logo_id = (int) $s['logo_id'];
+                        $logo_src = $logo_id ? wp_get_attachment_image_url($logo_id, 'medium') : '';
+                        ?>
+                        <div id="wpbono-logo-field">
+                            <input type="hidden" name="<?php echo esc_attr($name); ?>[logo_id]" value="<?php echo esc_attr($logo_id); ?>" />
+                            <p>
+                                <img class="wpbono-logo-preview" src="<?php echo esc_url($logo_src); ?>"
+                                     alt="" style="max-width:210px; height:auto; display:block; margin-bottom:8px;"
+                                     <?php echo $logo_src ? '' : 'hidden'; ?> />
+                                <button type="button" class="button wpbono-logo-choose"
+                                        data-title="<?php esc_attr_e('Select email logo', 'wpbono-rsvp-reminders'); ?>"
+                                        data-button="<?php esc_attr_e('Use this image', 'wpbono-rsvp-reminders'); ?>">
+                                    <?php esc_html_e('Select image', 'wpbono-rsvp-reminders'); ?>
+                                </button>
+                                <button type="button" class="button-link wpbono-logo-clear" style="margin-left:8px;"
+                                        <?php echo $logo_src ? '' : 'hidden'; ?>>
+                                    <?php esc_html_e('Use the default', 'wpbono-rsvp-reminders'); ?>
+                                </button>
+                            </p>
+                        </div>
+                        <p class="description">
+                            <?php
+                            if (wpbono_rsvp_reminders_theme_logo_url() !== '') {
+                                esc_html_e('Shown at the top of the reminder. Leave unset to use the logo bundled with the WPBono FSE theme.', 'wpbono-rsvp-reminders');
+                            } else {
+                                esc_html_e('Shown at the top of the reminder. Nothing is bundled with the active theme, so without one the reminder has no logo.', 'wpbono-rsvp-reminders');
+                            }
+                            ?>
+                            <br />
+                            <?php esc_html_e('Use a PNG or JPEG around 420px wide. No mail client renders SVG, and a white logo will not show on the white card.', 'wpbono-rsvp-reminders'); ?>
                         </p>
                     </td>
                 </tr>

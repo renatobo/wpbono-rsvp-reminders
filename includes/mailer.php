@@ -120,6 +120,48 @@ function wpbono_rsvp_reminders_attach_invite($rsvp, $event, $from, $to) {
 }
 
 /**
+ * The logo for the top of the reminder: the one chosen in Settings, else the
+ * one the theme bundles, else none.
+ *
+ * Deliberately never the Site Logo, which on this site is a white SVG: no mail
+ * client renders SVG, and white would not show on a white card. The settings
+ * screen says as much, but the fallback chain is the real guard.
+ */
+function wpbono_rsvp_reminders_logo_url() {
+    static $url = null;
+    if ($url !== null) {
+        return $url;
+    }
+
+    $logo_id = (int) wpbono_rsvp_reminders_setting('logo_id');
+    if ($logo_id > 0) {
+        // Falls through to the theme logo if the attachment has been deleted.
+        $chosen = wp_get_attachment_image_url($logo_id, 'full');
+        if ($chosen) {
+            $url = $chosen;
+            return $url;
+        }
+    }
+
+    $url = wpbono_rsvp_reminders_theme_logo_url();
+    return $url;
+}
+
+/**
+ * Memoised because it is a filesystem stat, and the uncached version ran once
+ * per reminder sent.
+ */
+function wpbono_rsvp_reminders_theme_logo_url() {
+    static $url = null;
+    if ($url === null) {
+        $url = (function_exists('get_theme_file_path') && file_exists(get_theme_file_path('assets/img/email-logo.png')))
+            ? get_theme_file_uri('assets/img/email-logo.png')
+            : '';
+    }
+    return $url;
+}
+
+/**
  * Reminder body, wrapped in EventON's own email header/footer so it matches the
  * confirmation the attendee already has.
  */
@@ -135,10 +177,7 @@ function wpbono_rsvp_reminders_body($event, $rsvp, $intro) {
         )));
     }
 
-    $logo = '';
-    if (function_exists('get_theme_file_path') && file_exists(get_theme_file_path('assets/img/email-logo.png'))) {
-        $logo = get_theme_file_uri('assets/img/email-logo.png');
-    }
+    $logo = wpbono_rsvp_reminders_logo_url();
 
     ob_start();
 
@@ -200,20 +239,43 @@ function wpbono_rsvp_reminders_body($event, $rsvp, $intro) {
 
 /**
  * Rolling activity log, capped so the option never grows without bound.
+ *
+ * Buffered rather than written per line. Writing on every send meant one
+ * option UPDATE per email, each re-serialising a list growing toward its own
+ * cap, inside the tick least able to afford it. The trade: a fatal mid-sweep
+ * loses that run's log. Acceptable, because the sent markers are the durable
+ * state and this is only a diagnostic.
  */
-function wpbono_rsvp_reminders_log($event_title, $to, $lead, $result) {
-    $log = get_option('wpbono_rsvp_reminders_log', array());
-    if (!is_array($log)) {
-        $log = array();
-    }
+function &wpbono_rsvp_reminders_log_buffer() {
+    static $buffer = array();
+    return $buffer;
+}
 
-    $log[] = array(
+function wpbono_rsvp_reminders_log($event_title, $to, $lead, $result) {
+    $buffer = &wpbono_rsvp_reminders_log_buffer();
+
+    $buffer[] = array(
         'time'   => time(),
         'event'  => (string) $event_title,
         'to'     => (string) $to,
         'lead'   => (int) $lead,
         'result' => (string) $result,
     );
+}
+
+function wpbono_rsvp_reminders_log_flush() {
+    $buffer = &wpbono_rsvp_reminders_log_buffer();
+    if (empty($buffer)) {
+        return;
+    }
+
+    $log = get_option('wpbono_rsvp_reminders_log', array());
+    if (!is_array($log)) {
+        $log = array();
+    }
+
+    $log = array_merge($log, $buffer);
+    $buffer = array();
 
     if (count($log) > 200) {
         $log = array_slice($log, -200);
@@ -221,3 +283,7 @@ function wpbono_rsvp_reminders_log($event_title, $to, $lead, $result) {
 
     update_option('wpbono_rsvp_reminders_log', $log, false);
 }
+
+// The sweep flushes its own buffer, but anything that logs outside one would
+// otherwise be dropped.
+add_action('shutdown', 'wpbono_rsvp_reminders_log_flush');
