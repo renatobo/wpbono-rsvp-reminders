@@ -3,7 +3,7 @@
  * Plugin Name: WPBono RSVP Reminders
  * Plugin URI: https://drocdesmo.com
  * Description: Scheduled reminder emails for EventON RSVP attendees, with a site-wide default lead time and a per-event override.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Renato Bonomini
  * Author URI: https://github.com/renatobo
  * License: GPL-3.0-or-later
@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WPBONO_RSVP_REMINDERS_VERSION', '1.0.2');
+define('WPBONO_RSVP_REMINDERS_VERSION', '1.0.3');
 define('WPBONO_RSVP_REMINDERS_DIR', plugin_dir_path(__FILE__));
 define('WPBONO_RSVP_REMINDERS_URL', plugin_dir_url(__FILE__));
 define('WPBONO_RSVP_REMINDERS_PAGE', 'wpbono-rsvp-reminders');
@@ -109,10 +109,22 @@ add_filter('plugin_action_links_' . plugin_basename(__FILE__), 'wpbono_rsvp_remi
 add_filter('network_admin_plugin_action_links_' . plugin_basename(__FILE__), 'wpbono_rsvp_reminders_action_links');
 
 /**
+ * EventON core is a hard dependency in its own right: the mailer wraps every
+ * reminder in EVO()->get_email_part(), and the sweep reads the event CPT.
+ * Checked separately from the add-on so the notice can name what is missing.
+ */
+function wpbono_rsvp_reminders_has_eventon_core(): bool {
+    return class_exists('EventON') && function_exists('EVO');
+}
+
+/**
  * EventON RSVP is a hard dependency: every code path reads its CPT and classes.
  */
 function wpbono_rsvp_reminders_has_eventon(): bool {
-    return class_exists('EVO_RSVP_CPT') && class_exists('EVORS_Event') && function_exists('EVORS');
+    return wpbono_rsvp_reminders_has_eventon_core()
+        && class_exists('EVO_RSVP_CPT')
+        && class_exists('EVORS_Event')
+        && function_exists('EVORS');
 }
 
 /**
@@ -141,8 +153,12 @@ function wpbono_rsvp_reminders_dependency_notice() {
     }
 
     if (!wpbono_rsvp_reminders_has_eventon()) {
+        $message = wpbono_rsvp_reminders_has_eventon_core()
+            ? __('WPBono RSVP Reminders needs the EventON RSVP add-on to be active. No reminders will be sent until it is.', 'wpbono-rsvp-reminders')
+            : __('WPBono RSVP Reminders needs EventON and its RSVP add-on to be active. No reminders will be sent until they are.', 'wpbono-rsvp-reminders');
+
         echo '<div class="notice notice-error"><p>';
-        echo esc_html__('WPBono RSVP Reminders needs EventON and its RSVP add-on to be active. No reminders will be sent until they are.', 'wpbono-rsvp-reminders');
+        echo esc_html($message);
         echo '</p></div>';
         return;
     }
