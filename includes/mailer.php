@@ -49,6 +49,13 @@ function wpbono_rsvp_reminders_send($rsvp_id, $event_id, $lead_days) {
         ? EVORS()->email->get_from_email('confirmation')
         : get_bloginfo('name') . ' <' . get_bloginfo('admin_email') . '>';
 
+    // EventON assembles this from two raw option fields and runs only
+    // htmlspecialchars_decode over them (class-emailing.php:290-332), so a
+    // newline in either one injects headers here or fails the send outright.
+    // The theme's evors_beforesend_email_data repair does not cover this path,
+    // because the address is read straight off EVORS() rather than filtered.
+    $from = str_replace(array("\r", "\n", "\0"), '', $from);
+
     $headers = array(
         'From: ' . $from,
         'Content-Type: text/html; charset=UTF-8',
