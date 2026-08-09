@@ -9,6 +9,16 @@ if (!defined('ABSPATH')) {
 
 function wpbono_rsvp_reminders_send($rsvp_id, $event_id, $lead_days) {
     $rsvp = new EVO_RSVP_CPT($rsvp_id);
+
+    // The event is re-derived from the RSVP, since EVORS_Event also needs that
+    // RSVP's repeat_interval. The caller selected this RSVP *by* e_id, so the
+    // two always agree; this guard makes that invariant explicit rather than
+    // leaving $event_id decorative, where a future caller could mail someone
+    // about an event other than the one they RSVP-ed to.
+    if ((int) $rsvp->event_id() !== (int) $event_id) {
+        return false;
+    }
+
     $rsvp_event = new EVORS_Event($rsvp->event_id(), $rsvp->repeat_interval());
     if (empty($rsvp_event->event)) {
         return false;
