@@ -23,6 +23,9 @@ if (!defined('ABSPATH')) {
 
 define('WPBONO_RSVP_REMINDERS_VERSION', '1.0.0');
 define('WPBONO_RSVP_REMINDERS_DIR', plugin_dir_path(__FILE__));
+define('WPBONO_RSVP_REMINDERS_URL', plugin_dir_url(__FILE__));
+define('WPBONO_RSVP_REMINDERS_PAGE', 'wpbono-rsvp-reminders');
+define('WPBONO_RSVP_REMINDERS_REPO', 'https://github.com/renatobo/wpbono-rsvp-reminders');
 define('WPBONO_RSVP_REMINDERS_CRON', 'wpbono_rsvp_reminders_tick');
 define('WPBONO_RSVP_REMINDERS_OPTION', 'wpbono_rsvp_reminders_settings');
 

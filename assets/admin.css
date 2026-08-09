@@ -1,0 +1,113 @@
+.wpbono-rsvp-reminders-admin {
+	max-width: 1120px;
+	margin-top: 18px;
+}
+
+.wpbono-rsvp-reminders-hero {
+	margin: 0 0 16px;
+	border: 1px solid #c8ccd0;
+	background: #f6f7f7;
+	display: block;
+	max-width: 750px;
+	width: fit-content;
+}
+
+/* Never scaled past the width it was drawn at, only down. */
+.wpbono-rsvp-reminders-hero-image {
+	display: block;
+	width: min(100%, 750px);
+	height: auto;
+}
+
+.wpbono-rsvp-reminders-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin: 16px 0 10px;
+}
+
+.wpbono-rsvp-reminders-meta a,
+.wpbono-rsvp-reminders-meta span {
+	display: inline-flex;
+	align-items: center;
+	min-height: 36px;
+	padding: 0 14px;
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	color: #0f172a;
+	text-decoration: none;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.wpbono-rsvp-reminders-meta a:hover {
+	border-color: #2271b1;
+	color: #2271b1;
+}
+
+.wpbono-rsvp-reminders-meta a:focus-visible {
+	outline: 2px solid currentColor;
+	outline-offset: 2px;
+}
+
+.wpbono-rsvp-reminders-headline {
+	margin: 8px 0 20px;
+}
+
+.wpbono-rsvp-reminders-headline h1 {
+	margin: 0 0 8px;
+	font-size: 42px;
+	line-height: 1.1;
+	color: #0f172a;
+	font-weight: 400;
+}
+
+.wpbono-rsvp-reminders-intro {
+	margin: 0 0 20px;
+	max-width: 76ch;
+	color: #475569;
+	font-size: 14px;
+	line-height: 1.65;
+}
+
+.wpbono-rsvp-reminders-intro-secondary {
+	margin-top: -8px;
+}
+
+.wpbono-rsvp-reminders-admin form,
+.wpbono-rsvp-reminders-card {
+	max-width: 960px;
+	margin-top: 1rem;
+	padding: 1rem 1.25rem;
+	border: 1px solid #c3c4c7;
+	background: #fff;
+}
+
+.wpbono-rsvp-reminders-card h2 {
+	margin-top: 0;
+}
+
+/* The log can carry long addresses and event titles. */
+.wpbono-rsvp-reminders-card td {
+	word-break: break-word;
+}
+
+.wpbono-rsvp-reminders-logo-preview {
+	max-width: 210px;
+	height: auto;
+	display: block;
+	margin-bottom: 8px;
+	padding: 8px;
+	border: 1px solid #dcdcde;
+	background: #fff;
+}
+
+@media screen and (max-width: 782px) {
+	.wpbono-rsvp-reminders-admin form,
+	.wpbono-rsvp-reminders-card {
+		padding: 0.75rem;
+	}
+
+	.wpbono-rsvp-reminders-headline h1 {
+		font-size: 32px;
+	}
+}

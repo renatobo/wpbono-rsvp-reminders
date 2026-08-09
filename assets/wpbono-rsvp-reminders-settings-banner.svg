@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="750" height="210" viewBox="0 0 750 210" fill="none"
+     xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="WPBono RSVP Reminders">
+  <defs>
+    <linearGradient id="rsvpBannerBg" x1="0" y1="0" x2="750" y2="210" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1B1F2A"/>
+      <stop offset="0.55" stop-color="#8C0F16"/>
+      <stop offset="1" stop-color="#E11C24"/>
+    </linearGradient>
+    <linearGradient id="rsvpBannerMark" x1="46" y1="58" x2="150" y2="162" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EDEFF2"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="750" height="210" fill="url(#rsvpBannerBg)"/>
+
+  <!-- Mark: the same envelope-and-clock as the plugin icon. -->
+  <g transform="translate(46 55)">
+    <rect width="104" height="104" rx="26" fill="url(#rsvpBannerMark)"/>
+    <rect x="18" y="28" width="68" height="46" rx="8" fill="#FFFFFF" stroke="#E11C24" stroke-width="5"/>
+    <path d="M18 34 L52 58 L86 34" stroke="#E11C24" stroke-width="5"
+          stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <circle cx="82" cy="80" r="21" fill="#FFFFFF" stroke="#8C0F16" stroke-width="5"/>
+    <path d="M82 68 V80 L91 86" stroke="#E11C24" stroke-width="5"
+          stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+
+  <g font-family="'Helvetica Neue',Helvetica,Arial,sans-serif">
+    <text x="186" y="86" fill="#FFFFFF" font-size="34" font-weight="700"
+          letter-spacing="0.2">WPBono RSVP Reminders</text>
+    <text x="186" y="120" fill="#FFE3E5" font-size="16">
+      Scheduled reminder emails for EventON RSVP attendees.
+    </text>
+    <text x="186" y="146" fill="#F0B9BD" font-size="14">
+      Site-wide lead time, per-event override, revising calendar invite.
+    </text>
+  </g>
+
+  <rect x="0" y="204" width="750" height="6" fill="#E11C24"/>
+</svg>

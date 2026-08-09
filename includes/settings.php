@@ -179,7 +179,7 @@ function wpbono_rsvp_reminders_menu() {
         __('RSVP Reminders', 'wpbono-rsvp-reminders'),
         __('RSVP Reminders', 'wpbono-rsvp-reminders'),
         'manage_options',
-        'wpbono-rsvp-reminders',
+        WPBONO_RSVP_REMINDERS_PAGE,
         'wpbono_rsvp_reminders_settings_page'
     );
     add_action('admin_print_footer_scripts-' . $hook, 'wpbono_rsvp_reminders_media_picker_script');
@@ -193,6 +193,19 @@ add_action('admin_menu', 'wpbono_rsvp_reminders_menu');
 function wpbono_rsvp_reminders_settings_assets() {
     wp_enqueue_media();
 }
+
+function wpbono_rsvp_reminders_admin_styles($hook_suffix) {
+    if ('settings_page_' . WPBONO_RSVP_REMINDERS_PAGE !== $hook_suffix) {
+        return;
+    }
+    wp_enqueue_style(
+        'wpbono-rsvp-reminders-admin',
+        WPBONO_RSVP_REMINDERS_URL . 'assets/admin.css',
+        array(),
+        WPBONO_RSVP_REMINDERS_VERSION
+    );
+}
+add_action('admin_enqueue_scripts', 'wpbono_rsvp_reminders_admin_styles');
 
 function wpbono_rsvp_reminders_media_picker_script() {
     ?>
@@ -248,23 +261,80 @@ function wpbono_rsvp_reminders_settings_page() {
 
     $s = wpbono_rsvp_reminders_settings();
     $next = wp_next_scheduled(WPBONO_RSVP_REMINDERS_CRON);
+
+    $version = WPBONO_RSVP_REMINDERS_VERSION;
+    $banner_url = WPBONO_RSVP_REMINDERS_URL . 'assets/wpbono-rsvp-reminders-settings-banner.svg';
+    $release_notes_url = WPBONO_RSVP_REMINDERS_REPO . '/releases/tag/v' . rawurlencode($version);
     ?>
     <div class="wrap">
-        <h1><?php esc_html_e('RSVP Reminders', 'wpbono-rsvp-reminders'); ?></h1>
+        <div class="wpbono-rsvp-reminders-admin">
+            <div class="wpbono-rsvp-reminders-hero">
+                <img
+                    src="<?php echo esc_url($banner_url); ?>"
+                    alt="<?php echo esc_attr__('WPBono RSVP Reminders settings banner', 'wpbono-rsvp-reminders'); ?>"
+                    class="wpbono-rsvp-reminders-hero-image"
+                />
+            </div>
 
-        <p>
+            <div class="wpbono-rsvp-reminders-meta">
+                <a href="<?php echo esc_url(WPBONO_RSVP_REMINDERS_REPO); ?>" target="_blank" rel="noopener noreferrer">
+                    <?php esc_html_e('GitHub Repository', 'wpbono-rsvp-reminders'); ?>
+                </a>
+                <span>
+                    <?php
+                    /* translators: %s: Plugin version. */
+                    echo esc_html(sprintf(__('Version %s', 'wpbono-rsvp-reminders'), $version));
+                    ?>
+                </span>
+                <a href="<?php echo esc_url($release_notes_url); ?>" target="_blank" rel="noopener noreferrer"
+                   aria-label="<?php echo esc_attr(sprintf(
+                       /* translators: %s: Plugin version. */
+                       __('Release notes for version %s', 'wpbono-rsvp-reminders'),
+                       $version
+                   )); ?>">
+                    <?php esc_html_e('Release notes', 'wpbono-rsvp-reminders'); ?>
+                </a>
+                <a href="https://github.com/renatobo" target="_blank" rel="noopener noreferrer">
+                    <?php esc_html_e('Renato Bonomini on GitHub', 'wpbono-rsvp-reminders'); ?>
+                </a>
+                <a href="https://github.com/afragen/git-updater" target="_blank" rel="noopener noreferrer">
+                    <?php esc_html_e('GitHub updates via Git Updater', 'wpbono-rsvp-reminders'); ?>
+                </a>
+            </div>
+
+            <div class="wpbono-rsvp-reminders-headline">
+                <h1><?php esc_html_e('RSVP Reminders', 'wpbono-rsvp-reminders'); ?></h1>
+                <p class="wpbono-rsvp-reminders-intro">
+                    <?php esc_html_e('Scheduled reminder emails for EventON RSVP attendees, filling the gap left by the unlicensed EventON Reminders add-on. Attendees who answered Yes get a reminder a set number of days before the event, with a calendar invite that revises their existing entry rather than adding a second one.', 'wpbono-rsvp-reminders'); ?>
+                </p>
+                <p class="wpbono-rsvp-reminders-intro wpbono-rsvp-reminders-intro-secondary">
+                    <?php
+                    if ($next) {
+                        printf(
+                            /* translators: %s: human readable time until the next run. */
+                            esc_html__('Next check in %s. Reminders go out for any event whose lead time has come due, so a late or missed check catches up on the following one.', 'wpbono-rsvp-reminders'),
+                            esc_html(human_time_diff(time(), $next))
+                        );
+                    } else {
+                        esc_html_e('The schedule is not armed. Reload this page to re-arm it.', 'wpbono-rsvp-reminders');
+                    }
+                    ?>
+                </p>
+            </div>
+
             <?php
-            if ($next) {
-                printf(
-                    /* translators: %s: human readable time until the next run. */
-                    esc_html__('Next check in %s. Reminders are sent for events whose lead time has come due.', 'wpbono-rsvp-reminders'),
-                    esc_html(human_time_diff(time(), $next))
-                );
-            } else {
-                esc_html_e('The schedule is not armed. Reload this page to re-arm it.', 'wpbono-rsvp-reminders');
-            }
+            /*
+             * No settings_errors() call. add_options_page() puts this screen under
+             * options-general.php, so core's admin-header.php loads options-head.php,
+             * which already prints them. Calling it again duplicates every notice.
+             */
             ?>
-        </p>
+
+            <?php if (!wpbono_rsvp_reminders_has_eventon()) : ?>
+                <div class="notice notice-error inline">
+                    <p><?php esc_html_e('The EventON RSVP add-on is not active. Nothing will be sent until it is.', 'wpbono-rsvp-reminders'); ?></p>
+                </div>
+            <?php endif; ?>
 
         <form method="post" action="options.php">
             <?php settings_fields('wpbono_rsvp_reminders'); ?>
@@ -340,8 +410,8 @@ function wpbono_rsvp_reminders_settings_page() {
                         <div id="wpbono-logo-field">
                             <input type="hidden" name="<?php echo esc_attr($name); ?>[logo_id]" value="<?php echo esc_attr($logo_id); ?>" />
                             <p>
-                                <img class="wpbono-logo-preview" src="<?php echo esc_url($logo_src); ?>"
-                                     alt="" style="max-width:210px; height:auto; display:block; margin-bottom:8px;"
+                                <img class="wpbono-logo-preview wpbono-rsvp-reminders-logo-preview"
+                                     src="<?php echo esc_url($logo_src); ?>" alt=""
                                      <?php echo $logo_src ? '' : 'hidden'; ?> />
                                 <button type="button" class="button wpbono-logo-choose"
                                         data-title="<?php esc_attr_e('Select email logo', 'wpbono-rsvp-reminders'); ?>"
@@ -398,7 +468,8 @@ function wpbono_rsvp_reminders_settings_page() {
             <?php submit_button(); ?>
         </form>
 
-        <h2><?php esc_html_e('Recent activity', 'wpbono-rsvp-reminders'); ?></h2>
+        <section class="wpbono-rsvp-reminders-card" aria-labelledby="wpbono-rsvp-reminders-activity">
+        <h2 id="wpbono-rsvp-reminders-activity"><?php esc_html_e('Recent activity', 'wpbono-rsvp-reminders'); ?></h2>
         <?php
         $log = get_option('wpbono_rsvp_reminders_log', array());
         if (empty($log)) {
@@ -424,10 +495,17 @@ function wpbono_rsvp_reminders_settings_page() {
         }
         ?>
         <form method="post">
-            <?php wp_nonce_field('wpbono_rsvp_reminders_clear_log'); ?>
+            <?php
+            // Named fields, not the defaults: settings_fields() above already
+            // emitted id="_wpnonce" and submit_button() id="submit", and a
+            // duplicate id is invalid markup that confuses assistive tech.
+            wp_nonce_field('wpbono_rsvp_reminders_clear_log', 'wpbono_clear_log_nonce');
+            ?>
             <input type="hidden" name="wpbono_rsvp_reminders_action" value="clear_log" />
-            <?php submit_button(__('Clear log', 'wpbono-rsvp-reminders'), 'secondary', 'submit', false); ?>
+            <?php submit_button(__('Clear log', 'wpbono-rsvp-reminders'), 'secondary', 'wpbono_clear_log_submit', false); ?>
         </form>
+        </section>
+        </div><!-- .wpbono-rsvp-reminders-admin -->
     </div>
     <?php
 }
@@ -437,7 +515,7 @@ function wpbono_rsvp_reminders_handle_actions() {
         return;
     }
     if ($_POST['wpbono_rsvp_reminders_action'] === 'clear_log') {
-        check_admin_referer('wpbono_rsvp_reminders_clear_log');
+        check_admin_referer('wpbono_rsvp_reminders_clear_log', 'wpbono_clear_log_nonce');
         delete_option('wpbono_rsvp_reminders_log');
     }
 }
