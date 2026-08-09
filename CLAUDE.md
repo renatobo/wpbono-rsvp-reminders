@@ -213,3 +213,10 @@ Gmail shows Yes/Maybe/No on `METHOD:REQUEST` invitations despite
 parse, so an answer changed in Gmail never reaches the RSVP list. The site stays
 the source of truth for the roster. Decided 2026-08-09; do not "fix" it by
 adding a reply parser without discussing it first.
+
+## Environment notes
+
+Machine-specific setup (the local Docker stack, its container names, and the
+upstream gotchas found while debugging against it) lives in `LOCAL-DEV.md`,
+which is gitignored. This repository is public, so keep paths, container names
+and credentials out of this file.
