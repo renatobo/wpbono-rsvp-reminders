@@ -20,9 +20,15 @@ owns the *scheduled* ones. That line is the architecture.
 - Plugin slug / directory: **`wpbono-rsvp-reminders`**. This is the upgrade key
   WordPress uses to recognise an installed copy. Never rename it: a rename
   installs a second plugin beside the first and orphans its settings.
-- Hard dependency on the **EventON RSVP add-on** (`EVO_RSVP_CPT`,
-  `EVORS_Event`, `EVORS()`). Every path is guarded and an admin notice fires if
-  it is missing.
+- Hard dependency on **EventON core** (`EventON`, `EVO()`) *and* the **EventON
+  RSVP add-on** (`EVO_RSVP_CPT`, `EVORS_Event`, `EVORS()`). Checked by two
+  functions, not one: `..._has_eventon_core()` exists so the notice can say
+  which of the two is missing, and `..._has_eventon()` requires both. Every path
+  is guarded on the latter. Core is a dependency in its own right because the
+  mailer wraps every reminder in `EVO()->get_email_part()`.
+  Only the add-on is in the `Requires Plugins` header: core installs into a
+  directory named `eventON`, and WordPress drops any dependency slug that is not
+  lowercase-and-hyphens. Do not "fix" that by renaming anything.
 - Soft dependency on the **WPBono FSE theme** for `wpbono_fse_theme_event_ics()`
   (the calendar invitation builder). Guarded with `function_exists`; without the
   theme, reminders still send, just without an attached invite, and the settings
