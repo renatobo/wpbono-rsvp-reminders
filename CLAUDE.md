@@ -81,10 +81,8 @@ silently re-consent people who declined.
   Before occurrence support the marker was a flat array of lead times; that
   format is still read, as occurrence 0, so an upgrade does not re-mail everyone
   already reminded. Do not drop that fallback.
-- Sent markers are **cleared when an event's schedule changes**, because a
-  rescheduled event needs re-announcing to people who were told the old date.
-  Both `evcal_srow` and `repeat_intervals` count, compared as one signature
-  stored in `_wpbono_reminder_last_start`.
+- Dry runs never write real sent markers; repeated previews are safe and do not consume real eligibility. Old dry-run markers cannot be distinguished from real sends and are not cleared automatically.
+- Schedule metadata writes capture the prior effective occurrence starts through WordPress pre-metadata filters. Post-write hooks clear only indices that moved or disappeared, in stable batches across all attendees. Appending dates and changing end times preserve unchanged indices. Direct SQL edits bypass these hooks.
 - A **first run close to an event** sends only the shortest lead that is already
   past, not every one of them an hour apart.
 - A tick sends at most **25 reminders** (`wpbono_rsvp_reminders_max_per_tick`).
@@ -226,3 +224,7 @@ Machine-specific setup (the local Docker stack, its container names, and the
 upstream gotchas found while debugging against it) lives in `LOCAL-DEV.md`,
 which is gitignored. This repository is public, so keep paths, container names
 and credentials out of this file.
+
+## Scheduling tests
+
+Run `php tests/scheduler.php`. CI runs it on PHP 8.2, 8.3 and 8.5. The harness uses real scheduler functions with storage/hooks and transport doubles; it is not an EventON runtime integration test.
