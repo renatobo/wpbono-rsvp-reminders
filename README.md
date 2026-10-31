@@ -168,6 +168,14 @@ Previous dry runs may already have left real sent markers. This update does not
 clear them automatically: those markers cannot reliably be distinguished from
 real sends. Review activity history before any targeted recovery.
 
+## Publishing a release
+
+Prepare a version PR into `main`: align the plugin header and version constant,
+update this changelog, and add `release-notes/X.Y.Z.md`. Apply the `release`
+label **before merging**. After merge, GitHub runs CI on that exact commit and
+publishes `vX.Y.Z` with the validated ZIP and checksum. Ordinary PRs do not
+publish. See `AGENTS.md` for retry and existing-release safeguards.
+
 ## License
 
 GPL-3.0-or-later.

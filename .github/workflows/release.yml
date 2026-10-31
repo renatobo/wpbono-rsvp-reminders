@@ -1,0 +1,101 @@
+name: Release merged PR
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Merged release PR number to retry
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: release-publication
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.pull_request.merged == true &&
+       contains(github.event.pull_request.labels.*.name, 'release'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.pr.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Verify merged release PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: python3 .github/scripts/release.py resolve
+
+  quality:
+    needs: resolve
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  publish:
+    needs: [resolve, quality]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
+        with:
+          php-version: '8.2'
+          coverage: none
+      - name: Validate release metadata and commit
+        id: metadata
+        env:
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          python3 .github/scripts/release.py metadata
+      - name: Build and validate release ZIP
+        run: |
+          bash build.sh
+          python3 .github/scripts/check-package.py
+      - name: Tag and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          ZIP="dist/wpbono-rsvp-reminders-$TAG.zip"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it."
+            exit 1
+          fi
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            test "$(git rev-list -n 1 "$TAG")" = "$RELEASE_SHA"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email 'github-actions[bot]@users.noreply.github.com'
+            git tag -a "$TAG" "$RELEASE_SHA" -m "Release $VERSION"
+            git push origin "refs/tags/$TAG"
+          fi
+          (cd dist && sha256sum "wpbono-rsvp-reminders-$TAG.zip" > "wpbono-rsvp-reminders-$TAG.zip.sha256")
+          gh release create "$TAG" "$ZIP" "$ZIP.sha256" --verify-tag --draft \
+            --title "WPBono RSVP Reminders $VERSION" --notes-file "release-notes/$VERSION.md"
+          gh release edit "$TAG" --draft=false --latest
