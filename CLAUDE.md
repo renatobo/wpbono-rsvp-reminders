@@ -228,3 +228,21 @@ and credentials out of this file.
 ## Scheduling tests
 
 Run `php tests/scheduler.php`. CI runs it on PHP 8.2, 8.3 and 8.5. The harness uses real scheduler functions with storage/hooks and transport doubles; it is not an EventON runtime integration test.
+
+## GitHub releases after PR merge
+
+`AGENTS.md` is a symlink to `CLAUDE.md`; keep it that way. Release automation is in `.github/workflows/release.yml`.
+
+For the next release:
+
+1. Update the plugin header and `WPBONO_RSVP_REMINDERS_VERSION` to the same new `X.Y.Z` version.
+2. Update the README changelog and add `release-notes/X.Y.Z.md` containing `## New Features`, `## Improvements`, and `## Bug Fixes` (use `- None.` where appropriate).
+3. Open a PR into `main`, run the tests/package checks, and apply the **`release` label before merging**. The label is explicit authorization for automatic publication when that PR merges.
+4. Merge the PR. The **Release merged PR** workflow validates the merged PR through GitHub’s API, runs reusable CI against its exact merge commit, verifies version/notes and main ancestry, builds/inspects the ZIP, creates annotated `vX.Y.Z`, and publishes the ZIP and SHA-256 checksum with the checked-in notes. A draft is published only after asset upload succeeds.
+5. Read back the release and asset checksum. A green PR alone does not prove publishing succeeded.
+
+Ordinary PRs without `release`, and closed unmerged PRs, do not publish. Adding the label after merge does not trigger a release. For an eligible merged PR, manually run **Release merged PR** with `pr_number` to retry. The label must still be present. A matching existing tag may be reused only if it points to that merge commit. Existing releases (including incomplete drafts) are never overwritten automatically: inspect them and explicitly resolve any draft/partial upload before retrying. Never delete or move a published version tag to retry.
+
+The workflow tags and publishes in the same run: tags pushed with `GITHUB_TOKEN` do not start a separate tag-push workflow. There is no separate automatic tag-push publishing path. Do not create/push a release tag by hand for this normal workflow. No PAT or additional secret is required; only the final publishing job has `contents: write`.
+
+Automation-only PRs need no new plugin version or `release` label unless they intentionally publish a new plugin package. To introduce the workflow, merge its unlabelled setup PR first; the next labelled version PR can use it. Local test commands: `php tests/scheduler.php`, `python3 tests/release.py`, `bash build.sh`, `python3 .github/scripts/check-package.py`.

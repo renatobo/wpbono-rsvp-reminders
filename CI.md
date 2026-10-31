@@ -5,3 +5,5 @@ GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main
 Runtime PHP syntax is checked across the declared minimum, PHP 8.3 and PHP 8.5. CI runs `bash build.sh` and `.github/scripts/check-package.py` to check the versioned ZIP for corruption, expected plugin root/bootstrap/uninstall files, unsafe paths and accidentally included development files.
 
 The dependency-free scheduling harness (`php tests/scheduler.php`) runs on every PHP matrix entry. It exercises the actual scheduler with in-memory WordPress hook/storage doubles and a mail transport double. It does not prove real WordPress database queries, EventON runtime behavior or SMTP delivery. No package is published.
+
+Release guard tests run with `python3 tests/release.py`. CI also supports `workflow_call` with an exact `ref` input for the release workflow. See `AGENTS.md` for the labelled-PR release process.

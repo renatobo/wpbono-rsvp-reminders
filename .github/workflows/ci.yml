@@ -5,13 +5,20 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit to validate for a release
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.action }}-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
 
 jobs:
   runtime:
@@ -24,6 +31,8 @@ jobs:
         php: ['8.2', '8.3', '8.5']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
         with:
           php-version: ${{ matrix.php }}
@@ -32,6 +41,8 @@ jobs:
         run: find . -path './vendor' -prune -o -path './tests' -prune -o -path './.git' -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Run scheduling regression tests
         run: php tests/scheduler.php
+      - name: Test release guards
+        run: python3 tests/release.py
       - name: Check package builder
         run: |
           bash -n build.sh
