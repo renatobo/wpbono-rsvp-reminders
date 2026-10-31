@@ -267,7 +267,9 @@ function wpbono_rsvp_reminders_process_event($event_id, $now, $lookahead, &$budg
                 }
 
                 $sent[] = $lead;
-                wpbono_rsvp_reminders_mark_sent($rsvp_id, $ri, $sent);
+                if (wpbono_rsvp_reminders_setting('dry_run') !== 'yes') {
+                    wpbono_rsvp_reminders_mark_sent($rsvp_id, $ri, $sent);
+                }
 
                 wpbono_rsvp_reminders_send($rsvp_id, $event_id, $lead);
                 if ($budget !== null) {
@@ -372,44 +374,90 @@ function wpbono_rsvp_reminders_rsvp_ids($meta_query): array {
 }
 
 /**
- * Clear the sent markers for an event when its schedule moves.
- *
- * A rescheduled event is a different proposition, and people who were told
- * "Saturday" need telling again. Both the one-off start and the repeat interval
- * map count: editing a repeating event's series moves every occupied occurrence
- * at once.
- *
- * Markers are cleared for every RSVP on the event rather than only the eligible
- * ones, so somebody who has since changed their answer or their opt-in does not
- * keep a stale marker that would suppress a later reminder if they change back.
+ * Effective occurrence starts, using the same one-off/repeat rules as the sweep.
+ * Snapshot before a metadata write so upgrades need no historical-state migration.
  */
-function wpbono_rsvp_reminders_reset_on_reschedule($meta_id, $post_id, $meta_key, $meta_value) {
-    if (!in_array($meta_key, array('evcal_srow', 'repeat_intervals'), true)) {
-        return;
+function wpbono_rsvp_reminders_schedule_starts($event_id): array {
+    if (!wpbono_rsvp_reminders_is_repeating($event_id)) {
+        return array(0 => (int) get_post_meta($event_id, 'evcal_srow', true));
     }
-    if (get_post_type($post_id) !== 'ajde_events') {
-        return;
+    $starts = array();
+    $repeats = maybe_unserialize(get_post_meta($event_id, 'repeat_intervals', true));
+    foreach ($repeats as $ri => $pair) {
+        $starts[(int) $ri] = is_array($pair) ? (int) ($pair[0] ?? 0) : 0;
     }
-
-    $signature = wpbono_rsvp_reminders_schedule_signature($post_id);
-    $previous = (string) get_post_meta($post_id, WPBONO_RSVP_REMINDERS_META_SIG, true);
-
-    if ($previous !== '' && $previous !== $signature) {
-        foreach (wpbono_rsvp_reminders_rsvp_ids(array(array('key' => 'e_id', 'value' => $post_id))) as $rsvp_id) {
-            delete_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT);
-        }
-    }
-    update_post_meta($post_id, WPBONO_RSVP_REMINDERS_META_SIG, $signature);
+    return $starts;
 }
-add_action('updated_postmeta', 'wpbono_rsvp_reminders_reset_on_reschedule', 10, 4);
-add_action('added_post_meta', 'wpbono_rsvp_reminders_reset_on_reschedule', 10, 4);
 
 /**
- * One value covering both the single start and the whole repeat series, so a
- * change to either is a single comparison.
+ * Capture existing data before WordPress adds, updates or deletes schedule meta.
+ * No persisted snapshot is needed: even the first edit after upgrade has old data.
+ * The marker signature from older versions is deliberately not used to infer which
+ * occurrence moved, since its hash cannot recover individual starts.
  */
-function wpbono_rsvp_reminders_schedule_signature($event_id): string {
-    $start = (int) get_post_meta($event_id, 'evcal_srow', true);
-    $repeats = maybe_unserialize(get_post_meta($event_id, 'repeat_intervals', true));
-    return $start . ':' . md5(is_array($repeats) ? wp_json_encode($repeats) : '');
+function wpbono_rsvp_reminders_before_schedule_change($check, $post_id, $meta_key, $value, $extra) {
+    if ($check !== null || !in_array($meta_key, array('evcal_srow', 'repeat_intervals', 'evcal_repeat'), true)
+        || get_post_type($post_id) !== 'ajde_events') {
+        return $check;
+    }
+    $GLOBALS['wpbono_rsvp_reminders_previous_schedule'][$post_id] = wpbono_rsvp_reminders_schedule_starts($post_id);
+    return $check;
 }
+add_filter('update_post_metadata', 'wpbono_rsvp_reminders_before_schedule_change', 10, 5);
+add_filter('add_post_metadata', 'wpbono_rsvp_reminders_before_schedule_change', 10, 5);
+add_filter('delete_post_metadata', 'wpbono_rsvp_reminders_before_schedule_change', 10, 5);
+
+/**
+ * Reset only markers whose repeat index changed start or disappeared.
+ * End-time-only edits and appended occurrences preserve existing reminders.
+ * Process every attendee in stable batches, including opted-out RSVPs, so no
+ * stale marker survives solely because the regular sweep has a 500-row cap.
+ */
+function wpbono_rsvp_reminders_reset_on_reschedule($meta_id, $post_id, $meta_key, $meta_value) {
+    if (!in_array($meta_key, array('evcal_srow', 'repeat_intervals', 'evcal_repeat'), true)
+        || get_post_type($post_id) !== 'ajde_events'
+        || !isset($GLOBALS['wpbono_rsvp_reminders_previous_schedule'][$post_id])) {
+        return;
+    }
+    $previous = $GLOBALS['wpbono_rsvp_reminders_previous_schedule'][$post_id];
+    unset($GLOBALS['wpbono_rsvp_reminders_previous_schedule'][$post_id]);
+    $current = wpbono_rsvp_reminders_schedule_starts($post_id);
+    $changed = array();
+    foreach ($previous as $ri => $start) {
+        if (!array_key_exists($ri, $current) || $current[$ri] !== $start) {
+            $changed[] = $ri;
+        }
+    }
+    if (empty($changed)) {
+        return;
+    }
+    $page = 1;
+    do {
+        $ids = get_posts(array(
+            'post_type' => 'evo-rsvp',
+            'post_status' => 'any',
+            'posts_per_page' => WPBONO_RSVP_REMINDERS_RSVP_LIMIT,
+            'paged' => $page++,
+            'orderby' => 'ID',
+            'order' => 'ASC',
+            'fields' => 'ids',
+            'no_found_rows' => true,
+            'meta_query' => array(array('key' => 'e_id', 'value' => $post_id)),
+        ));
+        wpbono_rsvp_reminders_prime_meta($ids);
+        foreach ($ids as $rsvp_id) {
+            $sent = wpbono_rsvp_reminders_sent_map($rsvp_id);
+            $updated = array_diff_key($sent, array_fill_keys($changed, true));
+            if ($updated !== $sent) {
+                if (empty($updated)) {
+                    delete_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT);
+                } else {
+                    update_post_meta($rsvp_id, WPBONO_RSVP_REMINDERS_META_SENT, $updated);
+                }
+            }
+        }
+    } while (count($ids) === WPBONO_RSVP_REMINDERS_RSVP_LIMIT);
+}
+add_action('updated_post_meta', 'wpbono_rsvp_reminders_reset_on_reschedule', 10, 4);
+add_action('added_post_meta', 'wpbono_rsvp_reminders_reset_on_reschedule', 10, 4);
+add_action('deleted_post_meta', 'wpbono_rsvp_reminders_reset_on_reschedule', 10, 4);

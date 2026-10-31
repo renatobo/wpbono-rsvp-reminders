@@ -460,7 +460,7 @@ function wpbono_rsvp_reminders_settings_page() {
                             <input type="checkbox" name="<?php echo esc_attr($name); ?>[dry_run]" value="yes" <?php checked($s['dry_run'], 'yes'); ?> />
                             <?php esc_html_e('Log what would be sent, send nothing', 'wpbono-rsvp-reminders'); ?>
                         </label>
-                        <p class="description"><?php esc_html_e('Attendees are still marked as reminded, so a dry run tells you the targeting is right without mailing anyone. Clear the log below before a real run.', 'wpbono-rsvp-reminders'); ?></p>
+                        <p class="description"><?php esc_html_e('Dry runs log targeting without marking attendees as reminded. Turn off dry run to send real reminders; clearing the log is optional.', 'wpbono-rsvp-reminders'); ?></p>
                     </td>
                 </tr>
             </table>

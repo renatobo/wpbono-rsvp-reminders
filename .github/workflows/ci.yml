@@ -30,6 +30,8 @@ jobs:
           coverage: none
       - name: Lint runtime PHP
         run: find . -path './vendor' -prune -o -path './tests' -prune -o -path './.git' -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Run scheduling regression tests
+        run: php tests/scheduler.php
       - name: Check package builder
         run: |
           bash -n build.sh

@@ -32,8 +32,9 @@ touching plugin files.
 2. Go to **Settings → RSVP Reminders**.
 3. Set the lead time, optionally a shorter second reminder, and pick an email
    logo.
-4. Leave **Dry run** ticked for one cycle and check **Recent activity** to
-   confirm the targeting before anything is mailed.
+4. Enable **Dry run** for one cycle and check **Recent activity** to
+   confirm the targeting before anything is mailed. Then turn it off to send real
+   reminders; previews do not mark attendees as reminded.
 
 ## Who gets a reminder
 
@@ -82,7 +83,7 @@ through [Git Updater](https://github.com/afragen/git-updater).
 | Calendar invite | Attach the `.ics`. Needs the theme. |
 | Email logo | Used by all three RSVP emails. PNG or JPEG; SVG is refused and WebP warns. |
 | Subject / Message | Supports `{event-name}`, `{event-date}`, `{first-name}`. |
-| Dry run | Logs what would be sent and sends nothing. Attendees are still marked as reminded, so it verifies targeting without mailing anyone. |
+| Dry run | Logs what would be sent and sends nothing. Real reminder markers are untouched, so a later real run can send to the same attendees. |
 
 Each event also gets an **RSVP Reminder** box on its edit screen: a per-event
 lead time, an off switch, and a count of attendees already reminded.
@@ -114,6 +115,11 @@ occurrence's start in `evcal_srow`; the series lives in `repeat_intervals`, and
 each RSVP records which occurrence it belongs to. Reminders are therefore timed
 per occurrence, and the sent marker is keyed by occurrence, so a weekly ride
 reminds its attendees every week rather than once ever.
+
+Schedule edits reset markers only for occurrence indices whose start changed or
+was removed. Appending dates or changing only end times preserves existing
+reminders. The comparison uses EventON repeat indices; if EventON reindexes a
+series, indices whose starts change are treated as rescheduled.
 
 ## The calendar invite
 
@@ -148,6 +154,19 @@ Local work happens in the bono Docker stack. There is no WP-CLI in the web
 container; for one-offs, write a script that requires `wp-load.php`, `docker cp`
 it in, and run it with `php`. See `CLAUDE.md` for the operational notes and
 `ui.md` for the settings-screen design.
+
+## Changelog
+
+### 1.0.4
+
+- Fixed dry runs consuming real reminder eligibility.
+- Preserved reminders for unchanged occurrences when editing repeat schedules.
+- Reset affected attendees in batches, including those beyond the normal sweep cap.
+- Added scheduling regression tests to CI.
+
+Previous dry runs may already have left real sent markers. This update does not
+clear them automatically: those markers cannot reliably be distinguished from
+real sends. Review activity history before any targeted recovery.
 
 ## License
 
